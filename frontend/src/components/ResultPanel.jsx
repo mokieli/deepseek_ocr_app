@@ -1,147 +1,13 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Copy, Download, Sparkles, Loader2, CheckCircle2, ChevronDown } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import BoundingBoxCanvas from './BoundingBoxCanvas'
+import { isHTML, isMarkdown } from '../utils/helpers'
 
 export default function ResultPanel({ result, loading, imagePreview, onCopy, onDownload }) {
-  const canvasRef = useRef(null)
-  const imgRef = useRef(null)
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [imageLoaded, setImageLoaded] = useState(false)
-
-  // Check if text looks like HTML (model outputs HTML, not markdown)
-  const isHTML = result?.text && (
-    result.text.includes('<table') || 
-    result.text.includes('<tr>') || 
-    result.text.includes('<td>') ||
-    result.text.includes('<div') ||
-    result.text.includes('<p>') ||
-    result.text.includes('<h1') ||
-    result.text.includes('<h2')
-  )
-
-  // Also check if it looks like markdown (for backwards compatibility)
-  const isMarkdown = result?.text && !isHTML && (
-    result.text.includes('##') || 
-    result.text.includes('**') || 
-    result.text.includes('```') ||
-    result.text.includes('- ') ||
-    result.text.includes('|')
-  )
-
-  // Draw boxes function
-  const drawBoxes = useCallback(() => {
-    if (!result?.boxes?.length || !canvasRef.current || !imgRef.current) {
-      console.log('❌ Cannot draw - missing:', {
-        hasBoxes: !!result?.boxes?.length,
-        hasCanvas: !!canvasRef.current,
-        hasImgRef: !!imgRef.current
-      })
-      return
-    }
-
-    console.log('🎨 Drawing boxes:', result.boxes)
-
-    const img = imgRef.current
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    
-    console.log('📐 Image dimensions:', {
-      displayWidth: img.offsetWidth,
-      displayHeight: img.offsetHeight,
-      naturalWidth: img.naturalWidth,
-      naturalHeight: img.naturalHeight,
-      imageDims: result.image_dims
-    })
-
-    // Set canvas size to match displayed image
-    canvas.width = img.offsetWidth
-    canvas.height = img.offsetHeight
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    
-    // Calculate scale factors
-    const scaleX = img.offsetWidth / (result.image_dims?.w || img.naturalWidth)
-    const scaleY = img.offsetHeight / (result.image_dims?.h || img.naturalHeight)
-    
-    console.log('📏 Scale factors:', { scaleX, scaleY })
-    
-    // Draw boxes
-    result.boxes.forEach((box, idx) => {
-      const [x1, y1, x2, y2] = box.box
-      const colors = [
-        '#00ff00', '#00ffff', '#ff00ff', '#ffff00', '#ff0066'
-      ]
-      const color = colors[idx % colors.length]
-      
-      // Scale coordinates
-      const sx = x1 * scaleX
-      const sy = y1 * scaleY
-      const sw = (x2 - x1) * scaleX
-      const sh = (y2 - y1) * scaleY
-      
-      console.log(`📦 Box ${idx} (${box.label}):`, {
-        original: [x1, y1, x2, y2],
-        scaled: [sx, sy, sx + sw, sy + sh],
-        dimensions: { width: sw, height: sh }
-      })
-      
-      // Draw semi-transparent fill
-      ctx.fillStyle = color + '33'
-      ctx.fillRect(sx, sy, sw, sh)
-      
-      // Draw thick neon border
-      ctx.strokeStyle = color
-      ctx.lineWidth = 4
-      ctx.shadowColor = color
-      ctx.shadowBlur = 10
-      ctx.strokeRect(sx, sy, sw, sh)
-      ctx.shadowBlur = 0
-      
-      // Label background
-      if (box.label) {
-        ctx.font = 'bold 14px Inter'
-        const metrics = ctx.measureText(box.label)
-        const padding = 8
-        const labelHeight = 24
-        
-        ctx.fillStyle = color
-        ctx.fillRect(sx, sy - labelHeight, metrics.width + padding * 2, labelHeight)
-        
-        // Label text
-        ctx.fillStyle = '#000'
-        ctx.fillText(box.label, sx + padding, sy - 7)
-      }
-    })
-    
-    console.log('✅ Finished drawing', result.boxes.length, 'boxes')
-  }, [result])
-
-  // Trigger drawing when image loads
-  useEffect(() => {
-    if (imageLoaded && result?.boxes?.length) {
-      console.log('🚀 Image loaded, drawing boxes now')
-      drawBoxes()
-    }
-  }, [imageLoaded, result, drawBoxes])
-
-  // Reset imageLoaded when result changes
-  useEffect(() => {
-    setImageLoaded(false)
-  }, [result])
-
-  // Redraw on window resize
-  useEffect(() => {
-    if (!imageLoaded || !result?.boxes?.length) return
-    
-    const handleResize = () => {
-      console.log('📐 Window resized, redrawing')
-      drawBoxes()
-    }
-    
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [imageLoaded, result, drawBoxes])
+  // 检查文本格式
+  const textIsHTML = isHTML(result?.text)
+  const textIsMarkdown = isMarkdown(result?.text)
 
   return (
     <div className="glass p-6 rounded-2xl space-y-4 h-full">
@@ -206,28 +72,16 @@ export default function ResultPanel({ result, loading, imagePreview, onCopy, onD
           >
             {/* Preview with boxes */}
             {imagePreview && result.boxes && result.boxes.length > 0 && (
-              <div className="relative rounded-xl overflow-hidden border border-white/10 bg-black">
-                <img 
-                  ref={imgRef}
-                  src={imagePreview} 
-                  alt="Result" 
-                  className="w-full block" 
-                  onLoad={() => {
-                    console.log('🖼️ Image loaded, triggering draw')
-                    setImageLoaded(true)
-                  }}
-                />
-                <canvas 
-                  ref={canvasRef}
-                  className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                  style={{ display: 'block' }}
-                />
-              </div>
+              <BoundingBoxCanvas 
+                imagePreview={imagePreview}
+                boxes={result.boxes}
+                imageDims={result.image_dims}
+              />
             )}
 
             {/* Text result */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-4 max-h-96 overflow-y-auto">
-              {isHTML ? (
+              {textIsHTML ? (
                 <div 
                   className="prose prose-invert prose-sm max-w-none"
                   dangerouslySetInnerHTML={{ __html: result.text }}
@@ -235,7 +89,7 @@ export default function ResultPanel({ result, loading, imagePreview, onCopy, onD
                     color: '#e5e7eb',
                   }}
                 />
-              ) : isMarkdown ? (
+              ) : textIsMarkdown ? (
                 <div className="prose prose-invert prose-sm max-w-none">
                   <ReactMarkdown>{result.text}</ReactMarkdown>
                 </div>

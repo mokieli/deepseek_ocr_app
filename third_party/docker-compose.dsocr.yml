@@ -1,0 +1,34 @@
+services:
+    vllm:
+        image: vllm/vllm-openai:nightly
+        runtime: nvidia
+        environment:
+            - NVIDIA_VISIBLE_DEVICES=all
+            - MODELSCOPE_CACHE=/root/.cache/modelscope
+            - VLLM_USE_MODELSCOPE=True
+            - USE_FAST=True
+            # Optional: Add your Hugging Face token if needed
+            # - HUGGING_FACE_HUB_TOKEN=your_token_here
+        volumes:
+            - /home/zji/.cache/modelscope:/root/.cache/modelscope
+            - /home/zji/.cache/vllm:/root/.cache/vllm
+            - /home/zji/.cache/huggingface:/root/.cache/huggingface
+        ports:
+            - "8000:8000"
+        ipc: host
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          device_ids: ["0", "1"]
+                          capabilities: [gpu, compute, utility]
+                limits:
+                    memory: 50g
+        command: >-
+            --model deepseek-ai/DeepSeek-OCR
+            --served_model_name dsocr
+            --gpu-memory-utilization 0.9
+            --api-key abc123
+            --max-num-seqs 1000
+            --tensor-parallel-size 2

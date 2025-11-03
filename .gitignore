@@ -78,15 +78,20 @@ lerna-debug.log*
 .dockerignore
 
 # Models (keep structure, ignore downloads)
-models/hub/models--*/blobs/*
-models/hub/models--*/snapshots/*/pytorch_model*.bin
-models/hub/models--*/snapshots/*/model*.safetensors
-models/hub/models--*/snapshots/*/*.msgpack
+models/*
+!models/.gitkeep
 *.bin
 *.safetensors
 *.msgpack
 *.h5
 *.onnx
+
+# Third-party repositories are tracked via submodules
+
+# Benchmark results
+benchmark_results_*/
+*_results.txt
+*_system_info.txt
 
 # Temporary files
 tmp/

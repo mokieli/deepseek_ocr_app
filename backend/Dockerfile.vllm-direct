@@ -1,0 +1,47 @@
+# vLLM Direct 推理 Dockerfile
+# 基于官方 vllm/vllm-openai:nightly 镜像，集成 FastAPI 后端和 DeepSeek-OCR 模型
+
+FROM vllm/vllm-openai:nightly
+
+WORKDIR /app
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/root/.cache/huggingface \
+    MODELSCOPE_CACHE=/root/.cache/modelscope \
+    VLLM_USE_MODELSCOPE=True
+
+# 安装系统依赖（图像处理所需）
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libgl1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Python 依赖
+# 基础镜像已包含 torch, flash-attn, transformers 等，只需安装额外的包
+# 使用 uv（基础镜像已安装）来加速安装
+COPY requirements-vllm-direct.txt /tmp/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -r /tmp/requirements-vllm-direct.txt
+
+# 复制应用代码
+COPY app/ ./app/
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+    CMD python3 -c "import requests; requests.get('http://localhost:8001/health', timeout=5)" || exit 1
+
+EXPOSE 8001
+
+# 覆盖基础镜像的 ENTRYPOINT ["vllm", "serve"]
+# 清空 ENTRYPOINT，使用完整的 CMD
+ENTRYPOINT []
+
+# 启动 FastAPI 服务（使用 uv run 可以更好地管理环境）
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+

@@ -1,0 +1,25 @@
+# FastAPI 及 Web 框架依赖
+fastapi>=0.115.12
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.20
+
+# 数据模型
+pydantic>=2.10.6
+pydantic-settings>=2.7.1
+
+# 图像处理
+Pillow>=11.1.0
+opencv-python-headless>=4.11.0.86
+
+# 工具库
+einops>=0.8.0
+addict>=2.4.0
+easydict>=1.10
+
+# vLLM 已经在基础镜像中安装，无需重复安装
+# vllm 会自动安装在 vllm/vllm-openai:nightly 镜像中
+
+# HTTP 客户端（用于测试和调试）
+httpx>=0.28.1
+requests>=2.32.3
+

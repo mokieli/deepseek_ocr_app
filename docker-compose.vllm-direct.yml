@@ -1,21 +1,55 @@
 services:
+  # 单容器架构：vLLM Direct + FastAPI 后端
   backend-direct:
     build:
       context: ./backend
       dockerfile: Dockerfile.vllm-direct
     container_name: deepseek-ocr-backend-direct
     runtime: nvidia
-    env_file:
-      - .env
     environment:
-      NVIDIA_VISIBLE_DEVICES: all
+      # GPU 配置
+      - NVIDIA_VISIBLE_DEVICES=all
+      
+      # 模型配置
+      - MODEL_PATH=${MODEL_PATH:-deepseek-ai/DeepSeek-OCR}
+      
+      # ModelScope 支持（默认启用）
+      - MODELSCOPE_CACHE=/root/.cache/modelscope
+      - VLLM_USE_MODELSCOPE=True
+      
+      # HuggingFace 缓存（备用）
+      - HF_HOME=/root/.cache/huggingface
+      
+      # vLLM 引擎配置
+      - TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE:-1}
+      - GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.75}
+      - MAX_MODEL_LEN=${MAX_MODEL_LEN:-8192}
+      - ENFORCE_EAGER=${ENFORCE_EAGER:-False}
+      - VLLM_USE_V1=1
+      
+      # DeepSeek OCR 模式配置
+      - BASE_SIZE=${BASE_SIZE:-1024}
+      - IMAGE_SIZE=${IMAGE_SIZE:-640}
+      - CROP_MODE=${CROP_MODE:-True}
+      
+      # API 配置
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - API_PORT=${API_PORT:-8001}
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-100}
+      
     volumes:
+      # ModelScope 缓存（优先，缓存到项目目录）
       - ./models/modelscope:/root/.cache/modelscope
+      # vLLM 缓存
       - ./models/vllm:/root/.cache/vllm
+      # HuggingFace 缓存（备用）
       - ./models/huggingface:/root/.cache/huggingface
+      
     ports:
       - "${API_PORT:-8001}:8001"
+      
     ipc: host
+    
     deploy:
       resources:
         reservations:
@@ -25,15 +59,18 @@ services:
               capabilities: [gpu, compute, utility]
         limits:
           memory: ${MEMORY_LIMIT:-50g}
+    
     healthcheck:
       test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 180s
+    
     networks:
       - ocr-network
 
+  # 前端（可选）
   frontend:
     build:
       context: ./frontend

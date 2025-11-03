@@ -1,21 +1,15 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, Zap, Loader2, Settings } from 'lucide-react'
+import { Sparkles, Zap, Settings } from 'lucide-react'
 import ImageUpload from './components/ImageUpload'
 import ModeSelector from './components/ModeSelector'
 import ResultPanel from './components/ResultPanel'
 import AdvancedSettings from './components/AdvancedSettings'
-import axios from 'axios'
-
-const API_BASE = import.meta.env.VITE_API_URL || '/api'
+import useOCR from './hooks/useOCR'
+import { downloadTextFile, getFileExtension } from './utils/helpers'
 
 function App() {
   const [mode, setMode] = useState('plain_ocr')
-  const [image, setImage] = useState(null)
-  const [imagePreview, setImagePreview] = useState(null)
-  const [result, setResult] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [includeCaption, setIncludeCaption] = useState(false)
   
@@ -29,87 +23,37 @@ function App() {
     test_compress: false
   })
 
-  const handleImageSelect = useCallback((file) => {
-    if (file === null) {
-      // Clear everything when removing image
-      setImage(null)
-      if (imagePreview) {
-        URL.revokeObjectURL(imagePreview)
-      }
-      setImagePreview(null)
-      setError(null)
-      setResult(null)
-    } else {
-      setImage(file)
-      setImagePreview(URL.createObjectURL(file))
-      setError(null)
-      setResult(null)
-    }
-  }, [imagePreview])
+  // 使用 OCR Hook
+  const [state, actions] = useOCR()
+  const { imagePreview, result, loading, error } = state
+  const { handleImageSelect, handleSubmit } = actions
 
-  const handleSubmit = async () => {
-    if (!image) {
-      setError('Please upload an image first')
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-
-    try {
-      const formData = new FormData()
-      formData.append('image', image)
-      formData.append('mode', mode)
-      formData.append('prompt', prompt)
-      // Enable grounding only for find mode
-      formData.append('grounding', mode === 'find_ref')
-      formData.append('include_caption', includeCaption)
-      formData.append('find_term', findTerm)
-      formData.append('schema', '')
-      formData.append('base_size', advancedSettings.base_size)
-      formData.append('image_size', advancedSettings.image_size)
-      formData.append('crop_mode', advancedSettings.crop_mode)
-      formData.append('test_compress', advancedSettings.test_compress)
-
-      const response = await axios.post(`${API_BASE}/ocr`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      })
-
-      setResult(response.data)
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message || 'An error occurred')
-    } finally {
-      setLoading(false)
-    }
+  const onSubmit = async () => {
+    await handleSubmit({
+      mode,
+      prompt,
+      grounding: mode === 'find_ref',
+      includeCaption,
+      findTerm,
+      schema: '',
+      baseSize: advancedSettings.base_size,
+      imageSize: advancedSettings.image_size,
+      cropMode: advancedSettings.crop_mode,
+      testCompress: advancedSettings.test_compress,
+    })
   }
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = () => {
     if (result?.text) {
       navigator.clipboard.writeText(result.text)
     }
-  }, [result])
+  }
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = () => {
     if (!result?.text) return
-    
-    const extensions = {
-      plain_ocr: 'txt',
-      describe: 'txt',
-      find_ref: 'txt',
-      freeform: 'txt',
-    }
-    
-    const ext = extensions[mode] || 'txt'
-    const blob = new Blob([result.text], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `deepseek-ocr-result.${ext}`
-    a.click()
-    URL.revokeObjectURL(url)
-  }, [result, mode])
+    const ext = getFileExtension(mode)
+    downloadTextFile(result.text, `deepseek-ocr-result.${ext}`)
+  }
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -228,19 +172,23 @@ function App() {
 
             {/* Action Button */}
             <motion.button
-              onClick={handleSubmit}
-              disabled={!image || loading}
+              onClick={onSubmit}
+              disabled={!imagePreview || loading}
               className={`w-full relative overflow-hidden rounded-2xl p-[2px] ${
-                !image || loading ? 'opacity-50 cursor-not-allowed' : ''
+                !imagePreview || loading ? 'opacity-50 cursor-not-allowed' : ''
               }`}
-              whileHover={!loading && image ? { scale: 1.02 } : {}}
-              whileTap={!loading && image ? { scale: 0.98 } : {}}
+              whileHover={!loading && imagePreview ? { scale: 1.02 } : {}}
+              whileTap={!loading && imagePreview ? { scale: 0.98 } : {}}
             >
               <div className="absolute inset-0 bg-gradient-to-r from-purple-600 via-pink-600 to-cyan-600 animate-gradient" />
               <div className="relative bg-dark-100 px-8 py-4 rounded-2xl flex items-center justify-center gap-3">
                 {loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full"
+                    />
                     <span className="font-semibold">Processing Magic...</span>
                   </>
                 ) : (
