@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # 配置
-ENDPOINT="${1:-http://localhost:8000}"
+ENDPOINT="${1:-http://localhost:8001}"
 TEST_IMAGE="${2:-./test-images/sample.jpg}"
 ITERATIONS="${3:-20}"
 WARMUP_ITERATIONS="${4:-3}"
@@ -33,7 +33,7 @@ fi
 echo -e "${YELLOW}检查服务健康状态...${NC}"
 if ! curl -f -s "${ENDPOINT}/health" > /dev/null; then
     echo -e "${RED}错误: 服务不可用或健康检查失败${NC}"
-    echo "请确保服务正在运行: docker compose -f docker-compose.vllm.yml up -d"
+    echo "请确保服务正在运行: docker compose up -d"
     exit 1
 fi
 echo -e "${GREEN}✓ 服务健康${NC}"
@@ -42,8 +42,10 @@ echo ""
 # 预热
 echo -e "${YELLOW}预热中 (${WARMUP_ITERATIONS}次)...${NC}"
 for i in $(seq 1 $WARMUP_ITERATIONS); do
-    curl -X POST "${ENDPOINT}/ocr" \
-        -F "file=@${TEST_IMAGE}" \
+    curl -X POST "${ENDPOINT}/api/ocr" \
+        -F "image=@${TEST_IMAGE}" \
+        -F "mode=plain_ocr" \
+        -F "grounding=false" \
         -o /dev/null -s -w ""
     echo -ne "预热进度: $i/$WARMUP_ITERATIONS\r"
 done
@@ -67,8 +69,10 @@ MAX_TIME=0
 
 for i in $(seq 1 $ITERATIONS); do
     # 测量时间（包括HTTP往返）
-    TIME=$(curl -X POST "${ENDPOINT}/ocr" \
-        -F "file=@${TEST_IMAGE}" \
+    TIME=$(curl -X POST "${ENDPOINT}/api/ocr" \
+        -F "image=@${TEST_IMAGE}" \
+        -F "mode=plain_ocr" \
+        -F "grounding=false" \
         -o /dev/null -s -w "%{time_total}\n")
     
     TIMES+=($TIME)
@@ -153,7 +157,7 @@ SYSTEM_INFO_FILE="system_info_${TIMESTAMP}.txt"
     nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
     echo ""
     echo "容器信息:"
-    docker compose -f docker-compose.vllm.yml ps
+    docker compose ps
     echo ""
     echo "容器资源使用:"
     docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}"
@@ -162,4 +166,3 @@ SYSTEM_INFO_FILE="system_info_${TIMESTAMP}.txt"
 echo -e "${GREEN}系统信息已保存到: $SYSTEM_INFO_FILE${NC}"
 echo ""
 echo -e "${GREEN}✓ 测试完成${NC}"
-

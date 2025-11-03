@@ -83,7 +83,7 @@ docker exec -it deepseek-ocr-backend-direct python -c "import vllm; print(vllm._
 ### 2. 测试模型加载
 
 ```bash
-docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct
+docker compose logs -f backend-direct
 ```
 
 查找以下信息：
@@ -104,7 +104,7 @@ curl -X POST "http://localhost:8001/api/ocr" \
 ### 获取详细错误信息
 
 ```bash
-docker-compose -f docker-compose.vllm-direct.yml logs backend-direct | tail -100
+docker compose logs backend-direct | tail -100
 ```
 
 ### 进入容器调试
@@ -142,4 +142,3 @@ ls -la /app/app/vllm_models/
 
 - 2025-10-30: 初始版本，添加 SamplingMetadata 导入兼容性
 - 2025-10-30: 添加 compute_logits 方法兼容性处理
-

@@ -44,14 +44,14 @@ read -p "是否重新构建 Docker 镜像？(y/N): " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "🔨 构建 Docker 镜像..."
-    docker-compose -f docker-compose.vllm-direct.yml build
+    docker compose build
     echo "✅ 镜像构建完成"
     echo ""
 fi
 
 # 启动服务
 echo "🚀 启动服务..."
-docker-compose -f docker-compose.vllm-direct.yml up -d
+docker compose up -d
 
 echo ""
 echo "⏳ 等待服务启动..."
@@ -60,7 +60,7 @@ sleep 5
 # 检查服务状态
 echo ""
 echo "📊 服务状态："
-docker-compose -f docker-compose.vllm-direct.yml ps
+docker compose ps
 
 echo ""
 echo "=================================="
@@ -73,8 +73,8 @@ echo "  - 健康检查: http://localhost:8001/health"
 echo "  - 前端界面: http://localhost:3000 (如果启用)"
 echo ""
 echo "📝 查看日志："
-echo "  docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct"
+echo "  docker compose logs -f backend-direct"
 echo ""
 echo "🛑 停止服务："
-echo "  docker-compose -f docker-compose.vllm-direct.yml down"
+echo "  docker compose down"
 echo ""

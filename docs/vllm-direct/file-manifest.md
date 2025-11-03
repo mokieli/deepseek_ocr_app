@@ -6,7 +6,7 @@
 deepseek_ocr_app/
 │
 ├── 📄 .env.vllm-direct                      # 配置文件模板
-├── 📄 docker-compose.vllm-direct.yml        # Docker Compose 配置
+├── 📄 docker-compose.yml                   # Docker Compose 配置（vLLM Direct）
 ├── 📄 start-vllm-direct.sh                  # 快速启动脚本 ⭐
 ├── 📄 docs/vllm-direct/README.md            # 详细使用文档 ⭐
 ├── 📄 docs/vllm-direct/implementation-summary.md # 实施总结
@@ -70,12 +70,12 @@ cp .env.vllm-direct .env
 # 编辑 .env 文件
 ```
 
-#### `docker-compose.vllm-direct.yml`
-Docker Compose 配置，定义单容器架构。
+#### `docker-compose.yml`
+Docker Compose 配置，定义 vLLM Direct 单容器架构。
 
 **使用方法：**
 ```bash
-docker-compose -f docker-compose.vllm-direct.yml up -d
+docker compose up -d
 ```
 
 ### 2. Docker 镜像
@@ -206,10 +206,10 @@ cp .env.vllm-direct .env
 # 2. 根据需要修改 .env
 
 # 3. 启动服务
-docker-compose -f docker-compose.vllm-direct.yml up -d
+docker compose up -d
 
 # 4. 查看日志
-docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct
+docker compose logs -f backend-direct
 ```
 
 ## 📊 文件统计

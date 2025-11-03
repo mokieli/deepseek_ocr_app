@@ -53,7 +53,7 @@
 #### 3. 部署配置
 - ✅ `backend/Dockerfile.vllm-direct` - 单容器 Dockerfile
 - ✅ `backend/requirements-vllm-direct.txt` - Python 依赖
-- ✅ `docker-compose.vllm-direct.yml` - Docker Compose 配置
+- ✅ `docker-compose.yml` - vLLM Direct Compose 配置
 
 #### 4. 文档和配置
 - ✅ `.env.vllm-direct` - 配置文件模板
@@ -106,7 +106,7 @@ cp .env.vllm-direct .env
 ./start-vllm-direct.sh
 
 # 或者手动启动
-docker-compose -f docker-compose.vllm-direct.yml up -d
+docker compose up -d
 ```
 
 ### 配置模型路径
@@ -122,7 +122,7 @@ MODEL_PATH=/root/.cache/modelscope/deepseek-ai/DeepSeek-OCR  # 使用本地模�
 # 在 .env 中设置
 TENSOR_PARALLEL_SIZE=2
 
-# 在 docker-compose.vllm-direct.yml 中指定 GPU
+# 在 docker-compose.yml 中指定 GPU
 device_ids: ["0", "1"]
 ```
 
@@ -189,14 +189,13 @@ curl -X POST "http://localhost:8001/api/ocr" \
 ## 兼容性说明
 
 ### 向后兼容
-- 保留了 vLLM OpenAI 模式的支持
-- 可以通过 `INFERENCE_ENGINE=vllm_openai` 切换回旧模式
-- API 端点完全兼容
+- API 端点保持一致，客户端无需调整
+- 环境变量沿用旧名称，便于脚本迁移
 
 ### 迁移路径
 ```bash
 # 从旧架构迁移
-1. 停止旧服务: docker-compose -f docker-compose.vllm.yml down
+1. 停止旧服务: docker compose down
 2. 复制配置: cp .env.vllm-direct .env
 3. 启动新服务: ./start-vllm-direct.sh
 4. 验证功能: curl http://localhost:8001/health

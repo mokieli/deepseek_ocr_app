@@ -32,9 +32,9 @@ cp .env.vllm-direct .env
 
 ### 2. 启动服务
 
-使用 docker-compose：
+使用 docker compose：
 ```bash
-docker-compose -f docker-compose.vllm-direct.yml up -d
+docker compose up -d
 ```
 
 首次启动会自动下载模型（如果本地没有），可能需要较长时间。
@@ -43,7 +43,7 @@ docker-compose -f docker-compose.vllm-direct.yml up -d
 
 ```bash
 # 查看日志
-docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct
+docker compose logs -f backend-direct
 
 # 检查健康状态
 curl http://localhost:8001/health
@@ -99,7 +99,7 @@ curl -X POST "http://localhost:8001/api/ocr" \
 # 在 .env 中设置
 TENSOR_PARALLEL_SIZE=2
 
-# 在 docker-compose.vllm-direct.yml 中指定 GPU
+# 在 docker-compose.yml 中指定 GPU
 device_ids: ["0", "1"]
 ```
 
@@ -112,7 +112,7 @@ device_ids: ["0", "1"]
 MODEL_PATH=/root/.cache/modelscope/deepseek-ai/DeepSeek-OCR
 ```
 
-确保在 `docker-compose.vllm-direct.yml` 中挂载了正确的目录。
+确保在 `docker-compose.yml` 中挂载了正确的目录。
 
 ## 性能优化
 
@@ -146,7 +146,7 @@ ENFORCE_EAGER=True
 
 检查日志：
 ```bash
-docker-compose -f docker-compose.vllm-direct.yml logs backend-direct
+docker compose logs backend-direct
 ```
 
 常见问题：
@@ -215,7 +215,7 @@ POST /api/ocr
 
 1. 停止现有服务：
    ```bash
-   docker-compose -f docker-compose.vllm.yml down
+   docker compose down
    ```
 
 2. 复制配置：
@@ -225,7 +225,7 @@ POST /api/ocr
 
 3. 启动新服务：
    ```bash
-   docker-compose -f docker-compose.vllm-direct.yml up -d
+   docker compose up -d
    ```
 
 4. 验证：
@@ -244,4 +244,3 @@ API 端点保持不变，前端无需修改。
 - [vLLM 官方文档](https://docs.vllm.ai/)
 - [DeepSeek-OCR 官方仓库](https://github.com/deepseek-ai/DeepSeek-OCR)
 - [项目主 README](README.md)
-
