@@ -57,9 +57,9 @@
 
 #### 4. 文档和配置
 - ✅ `.env.vllm-direct` - 配置文件模板
-- ✅ `README_VLLM_DIRECT.md` - 详细使用文档
+- ✅ `docs/vllm-direct/README.md` - 详细使用文档
 - ✅ `start-vllm-direct.sh` - 快速启动脚本
-- ✅ `IMPLEMENTATION_SUMMARY.md` - 本文档
+- ✅ `docs/vllm-direct/implementation-summary.md` - 本文档
 
 ### 修改的文件
 
@@ -210,7 +210,7 @@ curl -X POST "http://localhost:8001/api/ocr" \
 3. **模型加载失败** → 检查 `MODEL_PATH` 和网络连接
 4. **CUDA 错误** → 检查 NVIDIA 驱动版本
 
-详细故障排查见 [README_VLLM_DIRECT.md](README_VLLM_DIRECT.md)
+详细故障排查见 [vLLM Direct 指南](./README.md)
 
 ## 技术细节
 
@@ -237,4 +237,3 @@ curl -X POST "http://localhost:8001/api/ocr" \
 - ✅ 保持向后兼容
 
 用户现在可以直接使用 `./start-vllm-direct.sh` 快速启动服务，享受无 token 限制、高性能的 OCR 推理体验！🚀
-

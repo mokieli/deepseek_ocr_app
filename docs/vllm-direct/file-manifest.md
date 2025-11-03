@@ -8,9 +8,10 @@ deepseek_ocr_app/
 ├── 📄 .env.vllm-direct                      # 配置文件模板
 ├── 📄 docker-compose.vllm-direct.yml        # Docker Compose 配置
 ├── 📄 start-vllm-direct.sh                  # 快速启动脚本 ⭐
-├── 📄 README_VLLM_DIRECT.md                 # 详细使用文档 ⭐
-├── 📄 IMPLEMENTATION_SUMMARY.md             # 实施总结
-├── 📄 VLLM_DIRECT_FILES.md                  # 本文件
+├── 📄 docs/vllm-direct/README.md            # 详细使用文档 ⭐
+├── 📄 docs/vllm-direct/implementation-summary.md # 实施总结
+├── 📄 docs/vllm-direct/file-manifest.md     # 本文件
+├── 📄 docs/vllm-direct/version-compatibility.md # 版本兼容性说明
 │
 └── backend/
     ├── 📄 Dockerfile.vllm-direct            # 单容器 Dockerfile ⭐
@@ -162,8 +163,8 @@ class VLLMDirectEngine:
 
 ## 📚 文档
 
-### `README_VLLM_DIRECT.md` ⭐
-详细的使用文档。
+### `docs/vllm-direct/README.md` ⭐
+vLLM Direct 的快速入门与操作指南。
 
 **包含：**
 - 快速开始指南
@@ -173,7 +174,7 @@ class VLLMDirectEngine:
 - 故障排查
 - API 端点文档
 
-### `IMPLEMENTATION_SUMMARY.md`
+### `docs/vllm-direct/implementation-summary.md`
 完整的实施总结。
 
 **包含：**
@@ -182,6 +183,9 @@ class VLLMDirectEngine:
 - 关键特性
 - 优势总结
 - 后续建议
+
+### `docs/vllm-direct/version-compatibility.md`
+整理 vLLM 版本差异、兼容性调整与排障建议。
 
 ## 🚀 快速使用
 
@@ -243,10 +247,11 @@ docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct
 
 ## 🔗 相关文件
 
-- 主 README: [README.md](README.md)
-- vLLM OpenAI 架构: [README_VLLM.md](README_VLLM.md)
-- vLLM Direct 文档: [README_VLLM_DIRECT.md](README_VLLM_DIRECT.md)
-- 实施总结: [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)
+- 主 README: [../../README.md](../../README.md)
+- 架构概览: [../architecture.md](../architecture.md)
+- vLLM Direct 指南: [./README.md](./README.md)
+- 实施总结: [./implementation-summary.md](./implementation-summary.md)
+- 版本兼容性: [./version-compatibility.md](./version-compatibility.md)
 
 ## 📝 注意事项
 
@@ -258,7 +263,7 @@ docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct
 ## 🎯 下一步
 
 1. 使用 `./start-vllm-direct.sh` 启动服务
-2. 阅读 [README_VLLM_DIRECT.md](README_VLLM_DIRECT.md) 了解详情
+2. 阅读 [vLLM Direct 指南](./README.md) 了解详情
 3. 根据需要调整配置文件
 4. 测试 OCR 功能
 5. 监控性能和资源使用
@@ -268,4 +273,3 @@ docker-compose -f docker-compose.vllm-direct.yml logs -f backend-direct
 **实施完成时间：** 2025-10-30  
 **状态：** ✅ 所有任务完成  
 **测试：** ⏳ 待用户验证
-
