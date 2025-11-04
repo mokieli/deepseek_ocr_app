@@ -14,3 +14,17 @@ Automated coverage is light; new backend features should ship with `pytest` suit
 
 ## Commit & Pull Request Guidelines
 Commits use concise sentence-case summaries (e.g., `Update README.md with new content`) and may reference issues inline `(#12)`. Bundle related work only and update docs/config snapshots alongside code changes. Pull requests need a problem statement, implementation notes, and validation steps (lint, tests, engine mode exercised). Attach screenshots or GIFs for UI tweaks and call out configuration changes (e.g., new `.env` keys). Keep the checklist updated so reviewers know what was verified.
+
+## Tailwind + Vite Integration Notes
+- Install Tailwind CSS alongside the official Vite plugin: `pnpm add -D tailwindcss@latest @tailwindcss/vite`.
+- Register the plugin in `vite.config.ts` with `plugins: [react(), tailwindcss()]` so Vite generates utilities during dev and build.
+- Import Tailwind once at the top of the entry stylesheet with `@import "tailwindcss";`, then layer any bespoke base tokens below it.
+- Ensure the Docker build stage runs `pnpm install --prod=false` so Tailwind (a dev dependency) is present when `pnpm run build` executes.
+- When migrating from the Vite scaffold, update `index.html` to load `/src/main.tsx` if the JSX entrypoint was removed.
+
+## Recent Enhancements (2025-11)
+- **Shared vLLM service** – FastAPI 暴露 `/internal/infer` 供 Celery worker 复用同一个 AsyncLLMEngine，避免重复加载模型。Worker 通过 `WORKER_REMOTE_INFER_URL`、`INTERNAL_API_TOKEN` 与 `PDF_MAX_CONCURRENCY` 控制访问与并发。
+- **PDF 管线升级** – `process_pdf` 采用线程内并发，实时回写进度 (`TaskStatusResponse.progress`)，产出 Markdown、原始 JSON 与自动打包的 ZIP。回调会在 `backend/app/tasks/pdf.py` 中异步落库。
+- **Grounding 解析增强** – `GroundingParser` 支持全角符号清洗、嵌套坐标和标记裁剪，确保检测框始终可用。
+- **前端体验** – React 控制台新增图片预览 + 检测框叠加、PDF 任务进度条、ZIP 下载链接，并使用统一的 `TaskProgress` 模型驱动 UI。
+- **部署注意事项** – Docker Compose 已为 worker 注入新的内部推理环境变量；重启前确认 `.env` 中的 token、URL 一致，确保健康检查正常。

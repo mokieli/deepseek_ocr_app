@@ -9,6 +9,7 @@ import uvicorn
 
 from .config import settings
 from .api.routes import router, initialize_service, shutdown_service
+from .db.session import init_db
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     
     try:
+        await init_db()
         await initialize_service()
         print("✅ Service initialized successfully!")
     except Exception as e:

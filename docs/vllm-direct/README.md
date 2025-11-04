@@ -52,10 +52,16 @@ curl http://localhost:8001/health
 ### 4. 测试 API
 
 ```bash
-curl -X POST "http://localhost:8001/api/ocr" \
-  -F "image=@test_image.jpg" \
-  -F "mode=markdown" \
-  -F "grounding=true"
+# 图片同步 OCR
+curl -X POST "http://localhost:8001/api/ocr/image" \
+  -F "image=@test_image.jpg"
+
+# PDF 异步 OCR
+curl -X POST "http://localhost:8001/api/ocr/pdf" \
+  -F "pdf=@sample.pdf"
+
+# 查询任务状态
+curl "http://localhost:8001/api/tasks/<task_id>"
 ```
 
 ## 配置说明
@@ -184,18 +190,23 @@ GET /health
 
 返回服务状态和模型加载状态。
 
-### OCR 推理
+### 图片 OCR
 ```bash
-POST /api/ocr
+POST /api/ocr/image
 ```
 
 **表单参数：**
 - `image`: 图像文件（必需）
-- `mode`: OCR 模式（默认：`plain_ocr`）
-- `grounding`: 启用边界框（默认：`false`）
-- `base_size`: 基础尺寸（默认：`1024`）
-- `image_size`: 图像尺寸（默认：`640`）
-- `crop_mode`: 裁剪模式（默认：`true`）
+
+### PDF OCR
+```bash
+POST /api/ocr/pdf
+```
+
+**表单参数：**
+- `pdf`: PDF 文件（必需）
+
+提交后返回 `task_id`，通过 `GET /api/tasks/{task_id}` 查询状态并获取下载链接。
 
 ## 与其他架构对比
 

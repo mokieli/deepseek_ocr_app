@@ -20,7 +20,7 @@ fi
 echo "📋 当前配置："
 echo "-----------------------------------"
 if [ -f .env ]; then
-    grep -E "^(MODEL_PATH|TENSOR_PARALLEL_SIZE|GPU_MEMORY_UTILIZATION|MAX_MODEL_LEN|BASE_SIZE|IMAGE_SIZE|CROP_MODE|VLLM_USE_V1)=" .env || true
+    grep -E "^(MODEL_PATH|TENSOR_PARALLEL_SIZE|GPU_MEMORY_UTILIZATION|MAX_MODEL_LEN|BASE_SIZE|IMAGE_SIZE|CROP_MODE|VLLM_USE_V1|DATABASE_URL|REDIS_URL|STORAGE_DIR)=" .env || true
 fi
 echo "-----------------------------------"
 echo ""

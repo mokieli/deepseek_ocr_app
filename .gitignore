@@ -101,6 +101,9 @@ temp/
 *.swp
 *~
 
+# Generated storage
+data/
+
 # OS
 .DS_Store
 Thumbs.db

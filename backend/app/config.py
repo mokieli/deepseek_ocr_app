@@ -46,6 +46,28 @@ class Settings(BaseSettings):
         alias="VLLM_USE_V1",
         description="启用 vLLM v1 引擎实现"
     )
+
+    # 存储与基础设施
+    database_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@postgres:5432/ocr",
+        alias="DATABASE_URL",
+        description="PostgreSQL 连接字符串"
+    )
+    redis_url: str = Field(
+        default="redis://redis:6379/0",
+        alias="REDIS_URL",
+        description="Redis 连接字符串 (Celery broker/backend)"
+    )
+    storage_dir: str = Field(
+        default="/data/ocr",
+        alias="STORAGE_DIR",
+        description="任务输入输出根目录"
+    )
+    celery_queue: str = Field(
+        default="ocr_tasks",
+        alias="CELERY_QUEUE",
+        description="Celery 队列名称"
+    )
     
     # 上传配置
     max_upload_size_mb: int = Field(default=100, alias="MAX_UPLOAD_SIZE_MB")
@@ -70,6 +92,33 @@ class Settings(BaseSettings):
         default=True, 
         alias="CROP_MODE",
         description="启用裁剪模式（Gundam 模式）"
+    )
+    pdf_max_concurrency: int = Field(
+        default=3,
+        alias="PDF_MAX_CONCURRENCY",
+        description="PDF 页面并发识别数量上限"
+    )
+
+    # 默认提示词
+    image_prompt: str = Field(
+        default="<image>\nFree OCR.",
+        alias="IMAGE_PROMPT",
+        description="图片 OCR 默认提示词"
+    )
+    pdf_prompt: str = Field(
+        default="<image>\n<|grounding|>Convert the document to markdown.",
+        alias="PDF_PROMPT",
+        description="PDF OCR 默认提示词"
+    )
+    internal_api_token: str = Field(
+        default="deepseek-internal-token",
+        alias="INTERNAL_API_TOKEN",
+        description="内部接口访问令牌"
+    )
+    worker_remote_infer_url: str | None = Field(
+        default=None,
+        alias="WORKER_REMOTE_INFER_URL",
+        description="Worker 复用 API vLLM 引擎的内部推理地址"
     )
     
     class Config:

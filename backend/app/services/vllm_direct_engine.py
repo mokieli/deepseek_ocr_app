@@ -137,6 +137,7 @@ class VLLMDirectEngine:
         self,
         prompt: str,
         image_path: Optional[str] = None,
+        image_data: Optional[Image.Image] = None,
         base_size: int = 1024,
         image_size: int = 640,
         crop_mode: bool = True,
@@ -171,19 +172,20 @@ class VLLMDirectEngine:
         
         # 处理图像（如果提供）
         image_payload = None
-        if image_path and '<image>' in prompt:
-            image = self._load_image(image_path)
-            if image is None:
+        source_image: Optional[Image.Image] = None
+        if image_data is not None:
+            source_image = image_data
+        elif image_path and '<image>' in prompt:
+            source_image = self._load_image(image_path)
+            if source_image is None:
                 raise ValueError(f"无法加载图像: {image_path}")
-            
-            # 转换为 RGB
-            image = image.convert('RGB')
-            
+
+        if source_image is not None and '<image>' in prompt:
+            image = source_image.convert('RGB')
+
             if self._use_v1_engine:
-                # vLLM v1 会在内部调用 DeepseekOCRProcessor 处理图像
                 image_payload = image
             else:
-                # 使用 DeepseekOCRProcessor 预处理图像（vLLM legacy 路径）
                 processor = DeepseekOCRProcessor()
                 image_payload = processor.tokenize_with_images(
                     images=[image],

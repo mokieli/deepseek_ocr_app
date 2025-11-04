@@ -1,4 +1,25 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: deepseek-ocr-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-ocr}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - ocr-network
+
+  redis:
+    image: redis:7
+    container_name: deepseek-ocr-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - ocr-network
+
   backend-direct:
     build:
       context: ./backend
@@ -27,13 +48,25 @@ services:
       - API_HOST=${API_HOST:-0.0.0.0}
       - API_PORT=${API_PORT:-8001}
       - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-100}
+      # 基础设施
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/ocr}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - STORAGE_DIR=${STORAGE_DIR:-/data/ocr}
+      - CELERY_QUEUE=${CELERY_QUEUE:-ocr_tasks}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-deepseek-internal-token}
     volumes:
       - ./models/modelscope:/root/.cache/modelscope
       - ./models/vllm:/root/.cache/vllm
       - ./models/huggingface:/root/.cache/huggingface
+      - ./data:/data/ocr
     ports:
       - "${API_PORT:-8001}:8001"
     ipc: host
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
     deploy:
       resources:
         reservations:
@@ -49,6 +82,55 @@ services:
       timeout: 10s
       retries: 3
       start_period: 180s
+    networks:
+      - ocr-network
+
+  backend-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.vllm-direct
+    container_name: deepseek-ocr-worker
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - MODEL_PATH=${MODEL_PATH:-deepseek-ai/DeepSeek-OCR}
+      - MODELSCOPE_CACHE=${MODELSCOPE_CACHE:-/root/.cache/modelscope}
+      - VLLM_USE_MODELSCOPE=${VLLM_USE_MODELSCOPE:-True}
+      - HF_HOME=${HF_HOME:-/root/.cache/huggingface}
+      - TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE:-1}
+      - GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.9}
+      - MAX_MODEL_LEN=${MAX_MODEL_LEN:-8192}
+      - ENFORCE_EAGER=${ENFORCE_EAGER:-False}
+      - VLLM_USE_V1=${VLLM_USE_V1:-1}
+      - BASE_SIZE=${BASE_SIZE:-1024}
+      - IMAGE_SIZE=${IMAGE_SIZE:-640}
+      - CROP_MODE=${CROP_MODE:-True}
+      - WORKER_REMOTE_INFER_URL=${WORKER_REMOTE_INFER_URL:-http://backend-direct:8001/internal/infer}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-deepseek-internal-token}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/ocr}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - STORAGE_DIR=${STORAGE_DIR:-/data/ocr}
+      - CELERY_QUEUE=${CELERY_QUEUE:-ocr_tasks}
+    command: [
+      "celery",
+      "-A",
+      "app.celery_app",
+      "worker",
+      "--loglevel=INFO",
+      "--pool=solo",
+      "-Q",
+      "${CELERY_QUEUE:-ocr_tasks}"
+    ]
+    volumes:
+      - ./models/modelscope:/root/.cache/modelscope
+      - ./models/vllm:/root/.cache/vllm
+      - ./models/huggingface:/root/.cache/huggingface
+      - ./data:/data/ocr
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - ocr-network
 
@@ -68,3 +150,7 @@ services:
 networks:
   ocr-network:
     driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:

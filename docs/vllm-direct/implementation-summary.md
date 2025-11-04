@@ -6,6 +6,13 @@
 ## 实施目标
 将 DeepSeek-OCR 项目从 vLLM OpenAI 双容器架构迁移到基于 `vllm/vllm-openai:nightly` 的单容器 vLLM Direct 架构，解决 OpenAI API token 限制问题。
 
+## 2025-11 更新概览
+
+- **共享推理服务**：新增 `/internal/infer` 端点以及 `WORKER_REMOTE_INFER_URL`、`INTERNAL_API_TOKEN` 配置，Celery worker 通过内网 HTTP 复用 FastAPI 里已加载的 AsyncLLMEngine，避免重复占用 GPU 显存。
+- **PDF 任务增强**：`pdf_processor` 支持并发页级推理、进度上报和 Markdown/JSON/ZIP 产物；`TaskStatusResponse` 增加 `progress` 字段。
+- **Grounding 解析稳健性**：清洗全角符号与残留标签，保障检测框始终可解析。
+- **前端体验**：PDF 轮询加入进度条与 ZIP 下载，图片识别新增预览叠层与检测框列表。
+
 ## 架构变化
 
 ### 之前（双容器架构）
@@ -142,13 +149,23 @@ curl http://localhost:8001/health
 }
 ```
 
-### 2. OCR 测试
+### 2. 图片 OCR 测试
 ```bash
-curl -X POST "http://localhost:8001/api/ocr" \
-  -F "image=@test.jpg" \
-  -F "mode=markdown" \
-  -F "grounding=true"
+curl -X POST "http://localhost:8001/api/ocr/image" \
+  -F "image=@test.jpg"
 ```
+
+### 3. PDF OCR 入队
+```bash
+curl -X POST "http://localhost:8001/api/ocr/pdf" \
+  -F "pdf=@document.pdf"
+```
+
+```json
+{"task_id": "c1b7bdf2-..."}
+```
+
+随后通过 `GET /api/tasks/{task_id}` 查询状态。
 
 ### 3. 性能测试
 - 首次推理会稍慢（模型初始化）
@@ -165,7 +182,7 @@ curl -X POST "http://localhost:8001/api/ocr" \
 
 ### ✅ 保持的优势
 1. **高性能** - vLLM 引擎的所有优化
-2. **易用性** - API 端点保持不变
+2. **易用性** - API 端点精简为 `/api/ocr/image` 与 `/api/ocr/pdf`
 3. **官方支持** - 使用官方 vLLM 镜像
 4. **可扩展性** - 支持多卡、多节点
 
@@ -189,7 +206,7 @@ curl -X POST "http://localhost:8001/api/ocr" \
 ## 兼容性说明
 
 ### 向后兼容
-- API 端点保持一致，客户端无需调整
+- API 端点调整为图片同步与 PDF 异步两个入口
 - 环境变量沿用旧名称，便于脚本迁移
 
 ### 迁移路径

@@ -10,11 +10,20 @@ pydantic-settings>=2.7.1
 # 图像处理
 Pillow>=11.1.0
 opencv-python-headless>=4.11.0.86
+PyMuPDF>=1.24.10
+img2pdf>=0.5.1
 
 # 工具库
 einops>=0.8.0
 addict>=2.4.0
 easydict>=1.10
+
+# 数据与任务队列
+SQLAlchemy>=2.0.36
+asyncpg>=0.29.0
+alembic>=1.13.3
+celery>=5.4.0
+redis>=5.2.1
 
 # vLLM 已经在基础镜像中安装，无需重复安装
 # vllm 会自动安装在 vllm/vllm-openai:nightly 镜像中
@@ -22,4 +31,3 @@ easydict>=1.10
 # HTTP 客户端（用于测试和调试）
 httpx>=0.28.1
 requests>=2.32.3
-

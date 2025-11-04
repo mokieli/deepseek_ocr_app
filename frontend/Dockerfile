@@ -6,11 +6,10 @@ WORKDIR /app
 # 安装 pnpm
 RUN npm install -g pnpm
 
-# Copy package files first for better caching
-COPY package.json pnpm-lock.yaml* ./
+# Copy package manifest first for better caching
+COPY package.json ./
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install
 
 # Copy all source files
 COPY . .

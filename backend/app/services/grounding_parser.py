@@ -14,9 +14,22 @@ class GroundingParser:
     # 示例: <|ref|>label<|/ref|><|det|>[[x1,y1,x2,y2]]<|/det|>
     # 或: <|ref|>label<|/ref|><|det|>[[x1,y1,x2,y2], [x1,y1,x2,y2]]<|/det|>
     DET_BLOCK = re.compile(
-        r"<\|ref\|>(?P<label>.*?)<\|/ref\|>\s*<\|det\|>\s*(?P<coords>\[.*\])\s*<\|/det\|>",
+        r"<\|ref\|>(?P<label>.*?)<\|/ref\|>\s*<\|det\|>\s*(?P<coords>\[.*?\])\s*<\|/det\|>",
         re.DOTALL,
     )
+    _FULLWIDTH_MAP = str.maketrans({
+        "，": ",",
+        "。": ".",
+        "；": ",",
+        "：": ":",
+        "【": "[",
+        "】": "]",
+        "（": "(",
+        "）": ")",
+        "、": ",",
+        "％": "%",
+        "－": "-",
+    })
     
     @staticmethod
     def parse_detections(
@@ -41,10 +54,16 @@ class GroundingParser:
         
         for match in GroundingParser.DET_BLOCK.finditer(text or ""):
             label = match.group("label").strip()
-            coords_str = match.group("coords").strip()
-            
+            raw_coords = match.group("coords").strip()
+            coords_str = GroundingParser.sanitize_coords_text(raw_coords)
+            if not coords_str:
+                print("  ⚠️ Skipping empty coords string after sanitization")
+                continue
+
             print(f"🔍 DEBUG: Found detection for '{label}'")
-            print(f"📦 Raw coords string (with brackets): {coords_str}")
+            print(f"📦 Raw coords string (with brackets): {raw_coords}")
+            if coords_str != raw_coords:
+                print(f"🧹 Sanitized coords string: {coords_str}")
             
             try:
                 # 使用 ast.literal_eval 安全解析坐标
@@ -74,6 +93,20 @@ class GroundingParser:
         return boxes
     
     @staticmethod
+    def sanitize_coords_text(coords: str) -> str:
+        """规范化坐标字符串，移除异常标记并替换全角符号"""
+        if not coords:
+            return ""
+        cleaned = coords.translate(GroundingParser._FULLWIDTH_MAP)
+        cleaned = re.sub(r"<\|.*?\|>", "", cleaned)
+        cleaned = cleaned.strip()
+        start = cleaned.find("[")
+        end = cleaned.rfind("]")
+        if start != -1 and end != -1 and end >= start:
+            cleaned = cleaned[start : end + 1]
+        return cleaned
+    
+    @staticmethod
     def _normalize_coords(parsed: Any) -> List[List[float]]:
         """
         将解析的坐标归一化为列表的列表
@@ -81,6 +114,7 @@ class GroundingParser:
         支持两种格式:
         - 单个边界框: [x1, y1, x2, y2]
         - 多个边界框: [[x1, y1, x2, y2], [x1, y1, x2, y2], ...]
+        - 多点格式: [[[x1, y1], [x2, y2]], ...]
         """
         if not isinstance(parsed, list):
             raise ValueError(f"Unsupported coords type: {type(parsed)}")
@@ -90,8 +124,35 @@ class GroundingParser:
             print("📦 Single box (flat list) detected")
             return [parsed]
         
-        # 否则假设为嵌套列表
-        return parsed
+        normalized: List[List[float]] = []
+
+        for item in parsed:
+            if not isinstance(item, (list, tuple)):
+                continue
+
+            # 直接是 [x1, y1, x2, y2]
+            if len(item) >= 4 and all(isinstance(n, (int, float)) for n in item[:4]):
+                normalized.append([float(n) for n in item[:4]])
+                continue
+
+            # 可能是 [[x1, y1], [x2, y2]]
+            if len(item) >= 2:
+                first, second = item[0], item[1]
+                if isinstance(first, (list, tuple)) and isinstance(second, (list, tuple)):
+                    if len(first) >= 2 and len(second) >= 2:
+                        try:
+                            normalized.append(
+                                [
+                                    float(first[0]),
+                                    float(first[1]),
+                                    float(second[0]),
+                                    float(second[1]),
+                                ]
+                            )
+                        except (TypeError, ValueError):
+                            continue
+
+        return normalized
     
     @staticmethod
     def _scale_coords(
@@ -146,4 +207,3 @@ class GroundingParser:
     def has_grounding_tags(text: str) -> bool:
         """检查文本是否包含 grounding 标签"""
         return "<|det|>" in text or "<|ref|>" in text or "<|grounding|>" in text
-

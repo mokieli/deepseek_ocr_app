@@ -42,10 +42,8 @@ echo ""
 # 预热
 echo -e "${YELLOW}预热中 (${WARMUP_ITERATIONS}次)...${NC}"
 for i in $(seq 1 $WARMUP_ITERATIONS); do
-    curl -X POST "${ENDPOINT}/api/ocr" \
+    curl -X POST "${ENDPOINT}/api/ocr/image" \
         -F "image=@${TEST_IMAGE}" \
-        -F "mode=plain_ocr" \
-        -F "grounding=false" \
         -o /dev/null -s -w ""
     echo -ne "预热进度: $i/$WARMUP_ITERATIONS\r"
 done
@@ -69,10 +67,8 @@ MAX_TIME=0
 
 for i in $(seq 1 $ITERATIONS); do
     # 测量时间（包括HTTP往返）
-    TIME=$(curl -X POST "${ENDPOINT}/api/ocr" \
+    TIME=$(curl -X POST "${ENDPOINT}/api/ocr/image" \
         -F "image=@${TEST_IMAGE}" \
-        -F "mode=plain_ocr" \
-        -F "grounding=false" \
         -o /dev/null -s -w "%{time_total}\n")
     
     TIMES+=($TIME)

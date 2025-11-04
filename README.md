@@ -84,8 +84,8 @@ docker compose up --build backend-direct
 
 ## 🏗️ 架构概览
 - 后端：FastAPI 应用在启动阶段通过 `VLLMDirectEngine` 注册 DeepSeek-OCR 模型，所有推理请求均直接调用 `AsyncLLMEngine.generate`
-- 前端：React + Vite 开发，构建后由 Nginx 提供静态资源，数据交互通过 `/api/ocr`
-- 数据流：上传图像 → 后端预处理 → vLLM 推理 → 返回文本与可选边界框
+- 前端：React + Vite 开发，构建后由 Nginx 提供静态资源，支持图片即时识别与 PDF 异步任务轮询
+- 数据流：上传图像 → 后端预处理 → vLLM 推理 → 返回文本、边界框与可下载结果（PDF 场景通过队列异步计算）
 
 深入阅读：
 - [docs/architecture.md](docs/architecture.md)
@@ -95,28 +95,67 @@ docker compose up --build backend-direct
 
 ## 📖 API 快速参考
 
-### `POST /api/ocr`
-请求示例：
+### `POST /api/ocr/image`
+同步处理单张图片，立即返回识别结果。
+
 ```bash
-curl -X POST "http://localhost:8001/api/ocr" \
-  -F "image=@your_image.jpg" \
-  -F "mode=plain_ocr" \
-  -F "grounding=true"
+curl -X POST "http://localhost:8001/api/ocr/image" \
+  -F "image=@your_image.jpg"
 ```
 
-响应示例：
 ```json
 {
   "success": true,
   "text": "识别的文本...",
   "raw_text": "原始模型输出...",
   "boxes": [
-    {"label": "amount", "box": [x1, y1, x2, y2]}
+    {"label": "title", "box": [12, 40, 512, 96]}
   ],
-  "image_dims": {"w": 1920, "h": 1080},
-  "metadata": {
-    "mode": "plain_ocr",
-    "inference_engine": "vllm_direct"
+  "image_dims": {"w": 1920, "h": 1080}
+}
+```
+
+### `POST /api/ocr/pdf`
+将 PDF 加入异步队列，返回任务 ID。
+
+```bash
+curl -X POST "http://localhost:8001/api/ocr/pdf" \
+  -F "pdf=@document.pdf"
+```
+
+```json
+{
+  "task_id": "7f0b7fa0-8f7b-4fff-b2a3-9fe2a4a5e135"
+}
+```
+
+### `GET /api/tasks/{task_id}`
+查询任务状态、下载链接和页面摘要。
+
+```json
+{
+  "task_id": "7f0b7fa0-8f7b-4fff-b2a3-9fe2a4a5e135",
+  "status": "succeeded",
+  "task_type": "pdf",
+  "created_at": "2025-02-03T02:34:56.123456",
+  "updated_at": "2025-02-03T02:35:42.654321",
+  "result": {
+    "markdown_url": "/api/tasks/7f0b7fa0-8f7b-4fff-b2a3-9fe2a4a5e135/download/result.md",
+    "raw_json_url": "/api/tasks/7f0b7fa0-8f7b-4fff-b2a3-9fe2a4a5e135/download/raw.json",
+    "image_urls": [
+      "/api/tasks/7f0b7fa0-8f7b-4fff-b2a3-9fe2a4a5e135/download/images/page-0-img-0.jpg"
+    ],
+    "pages": [
+      {
+        "index": 0,
+        "markdown": "# 页面标题...",
+        "raw_text": "<|ref|>...",
+        "image_assets": ["images/page-0-img-0.jpg"],
+        "boxes": [
+          {"label": "image", "box": [120, 200, 640, 480]}
+        ]
+      }
+    ]
   }
 }
 ```
@@ -149,7 +188,7 @@ pnpm run dev
 ```
 
 ### 实用脚本
-- `scripts/benchmark-vllm.sh`：对 `/api/ocr` 做吞吐测试
+- `scripts/benchmark-vllm.sh`：对 `/api/ocr/image` 做吞吐测试
 - `scripts/compare-versions.sh`：辅助比对本地与上游版本
 
 ## 🖥️ 系统要求
