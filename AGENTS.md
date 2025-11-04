@@ -26,5 +26,6 @@ Commits use concise sentence-case summaries (e.g., `Update README.md with new co
 - **Shared vLLM service** – FastAPI 暴露 `/internal/infer` 供 Celery worker 复用同一个 AsyncLLMEngine，避免重复加载模型。Worker 通过 `WORKER_REMOTE_INFER_URL`、`INTERNAL_API_TOKEN` 与 `PDF_MAX_CONCURRENCY` 控制访问与并发。
 - **PDF 管线升级** – `process_pdf` 采用线程内并发，实时回写进度 (`TaskStatusResponse.progress`)，产出 Markdown、原始 JSON 与自动打包的 ZIP。回调会在 `backend/app/tasks/pdf.py` 中异步落库。
 - **Grounding 解析增强** – `GroundingParser` 支持全角符号清洗、嵌套坐标和标记裁剪，确保检测框始终可用。
-- **前端体验** – React 控制台新增图片预览 + 检测框叠加、PDF 任务进度条、ZIP 下载链接，并使用统一的 `TaskProgress` 模型驱动 UI。
+- **前端体验** – 控制台拆分为 `ImageOcrPanel`/`PdfTaskPanel`/`TaskLookupPanel` 三个功能块：PDF 状态以 1 s 轮询自动刷新（移除手动刷新按钮），任务完成后仅提供 ZIP 下载；任务 ID 查询区域支持任意任务实时追踪。
+- **Worker 稳定性** – Celery PDF 任务复用专用事件循环线程，避免 asyncio run-loop 混用导致的 “Future attached to a different loop” 异常。
 - **部署注意事项** – Docker Compose 已为 worker 注入新的内部推理环境变量；重启前确认 `.env` 中的 token、URL 一致，确保健康检查正常。

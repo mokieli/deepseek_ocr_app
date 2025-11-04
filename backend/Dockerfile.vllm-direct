@@ -32,10 +32,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # 复制应用代码
 COPY app/ ./app/
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-    CMD python3 -c "import requests; requests.get('http://localhost:8001/health', timeout=5)" || exit 1
-
 EXPOSE 8001
 
 # 覆盖基础镜像的 ENTRYPOINT ["vllm", "serve"]
@@ -44,4 +40,3 @@ ENTRYPOINT []
 
 # 启动 FastAPI 服务（使用 uv run 可以更好地管理环境）
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
-

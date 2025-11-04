@@ -11,7 +11,8 @@
 - **共享推理服务**：新增 `/internal/infer` 端点以及 `WORKER_REMOTE_INFER_URL`、`INTERNAL_API_TOKEN` 配置，Celery worker 通过内网 HTTP 复用 FastAPI 里已加载的 AsyncLLMEngine，避免重复占用 GPU 显存。
 - **PDF 任务增强**：`pdf_processor` 支持并发页级推理、进度上报和 Markdown/JSON/ZIP 产物；`TaskStatusResponse` 增加 `progress` 字段。
 - **Grounding 解析稳健性**：清洗全角符号与残留标签，保障检测框始终可解析。
-- **前端体验**：PDF 轮询加入进度条与 ZIP 下载，图片识别新增预览叠层与检测框列表。
+- **前端体验重构**：App 拆分为独立组件，PDF 任务改为 1 s 自动轮询且默认仅露出 ZIP 下载，新增任务 ID 查询面板统一查看进度。
+- **Worker 稳定性**：PDF Celery 任务运行在专用事件循环线程，规避 asyncpg Future 附着到错误 loop 的异常。
 
 ## 架构变化
 

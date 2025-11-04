@@ -63,15 +63,16 @@
 
 ### 任务执行
 - `backend/app/tasks/pdf.py`
-  - 入口使用 `asyncio.to_thread(process_pdf, …)` 避免阻塞事件循环。
-  - 通过 `_update_progress` 协程持续刷新数据库中的 `result_payload["progress"]`。
+  - Celery 入口将 `_run_pdf_task` 派发到专用的 `pdf-task-loop` 线程，保证 asyncpg 连接与 SQLAlchemy 会话绑定到固定事件循环，避免 “Future attached to a different loop”。
+  - `_run_pdf_task` 继续通过 `asyncio.to_thread(process_pdf, …)` 执行 CPU 密集型 PDF 处理，同时 `_update_progress` 协程安全回写进度。
   - 成功后调用 `mark_succeeded`；失败时保留最后一次进度并写入错误信息。
 
 ## 前端组件
 
-- `frontend/src/App.tsx`
-  - 图片识别：叠加预览图层，展示检测框、原文、清洗后的 Markdown。
-  - PDF 任务：上传后轮询状态，显示进度条（由 `TaskStatusResponse.progress.percent` 驱动），提供 Markdown/JSON/ZIP/裁剪图下载。
+- `frontend/src/App.tsx`：组合独立功能 panel，保持响应式双栏布局。
+- `frontend/src/components/ImageOcrPanel.tsx`：图片识别、预览叠层与检测框列表，上传后即时返回结果。
+- `frontend/src/components/PdfTaskPanel.tsx`：PDF 上传 + 1 s 自动轮询进度，移除手动刷新按钮，任务完成后仅暴露 ZIP 下载。
+- `frontend/src/components/TaskLookupPanel.tsx`：支持粘贴任意任务 ID，统一的状态徽标、进度条与 ZIP 下载。
 - `frontend/src/api/client.ts`：与后端模型保持一致，新增 `TaskProgress`、`archive_url`。
 - 样式整合 `index.css`、Tailwind，保留两列布局与卡片式视觉。
 
@@ -96,7 +97,7 @@
 4. 前端轮询 `/api/tasks/{task_id}`：
    - `status` 控制徽标（排队中/执行中/完成/失败）。
    - `progress.percent` 渲染条形图和提示语。
-   - `result.image_urls`、`archive_url`、`markdown_url` 提供下载按钮。
+   - `result.archive_url` 用于 ZIP 下载（默认展示），`markdown_url` 与 `image_urls` 可供其他调用方使用。
 
 ## 关键设计决策
 
@@ -106,7 +107,7 @@
 
 2. **细粒度进度回传**
    - `TaskProgress` 包含 `current`、`total`、`percent`、`message`，前端无需额外推理即可展示实时状态。
-   - `_update_progress` 采用事件循环安全的回调，确保不会阻塞 `asyncio.run`。
+   - 专用 `pdf-task-loop` 线程管理异步会话， `_update_progress` 在同一事件循环内提交数据库变更，避免跨循环 Future 冲突。
 
 3. **健壮的 Grounding 解析**
    - 清洗全角标点、剔除残留标签，保障 `ast.literal_eval` 始终成功。

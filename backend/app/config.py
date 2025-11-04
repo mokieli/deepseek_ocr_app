@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         description="启用裁剪模式（Gundam 模式）"
     )
     pdf_max_concurrency: int = Field(
-        default=3,
+        default=20,
         alias="PDF_MAX_CONCURRENCY",
         description="PDF 页面并发识别数量上限"
     )

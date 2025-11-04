@@ -7,7 +7,10 @@ import traceback
 import uuid
 from pathlib import Path
 
+from threading import Event, Thread
+
 from ..celery_app import celery_app
+from ..config import settings
 from ..db.models import OcrTask
 from ..db.session import get_session_factory
 from ..services.pdf_processor import process_pdf
@@ -16,10 +19,42 @@ from ..services.storage import StorageManager
 
 storage_manager = StorageManager()
 
+_worker_loop: asyncio.AbstractEventLoop | None = None
+_worker_loop_thread: Thread | None = None
+_worker_loop_ready = Event()
+
+
+def _ensure_worker_loop() -> asyncio.AbstractEventLoop:
+    global _worker_loop, _worker_loop_thread
+
+    if _worker_loop and _worker_loop.is_running():
+        return _worker_loop
+
+    loop = asyncio.new_event_loop()
+    _worker_loop_ready.clear()
+
+    def _run_loop() -> None:
+        asyncio.set_event_loop(loop)
+        _worker_loop_ready.set()
+        loop.run_forever()
+
+    thread = Thread(target=_run_loop, name="pdf-task-loop", daemon=True)
+    thread.start()
+
+    _worker_loop_ready.wait()
+    _worker_loop = loop
+    _worker_loop_thread = thread
+    return loop
+
 
 @celery_app.task(name="ocr.process_pdf", bind=True)
 def process_pdf_task(self, task_id: str) -> None:  # type: ignore[override]
-    asyncio.run(_run_pdf_task(task_id))
+    loop = _ensure_worker_loop()
+    future = asyncio.run_coroutine_threadsafe(_run_pdf_task(task_id), loop)
+    try:
+        future.result()
+    except Exception as exc:  # pragma: no cover - propagate to Celery
+        raise exc
 
 
 async def _run_pdf_task(task_id: str) -> None:
@@ -70,6 +105,7 @@ async def _run_pdf_task(task_id: str) -> None:
             input_path,
             output_dir,
             _progress_callback,
+            settings.pdf_max_concurrency,
         )
 
         async with session_factory() as session:

@@ -26,6 +26,30 @@ DETECTION_BLOCK = re.compile(
 )
 
 
+_TEXTUAL_LABEL_KEYWORDS = (
+    "text",
+    "title",
+    "subtitle",
+    "sub_title",
+    "caption",
+    "paragraph",
+    "header",
+    "footer",
+    "footnote",
+    "list",
+    "figure",
+    "table",
+    "page_number",
+)
+
+
+def _is_textual_label(label: str) -> bool:
+    normalized = label.strip().lower()
+    if not normalized:
+        return True
+    return any(keyword in normalized for keyword in _TEXTUAL_LABEL_KEYWORDS)
+
+
 @dataclass
 class PageResult:
     index: int
@@ -48,7 +72,13 @@ class PdfProcessingResult:
         payload: dict[str, Any] = {
             "markdown_file": self.markdown_file,
             "raw_json_file": self.raw_json_file,
-            "pages": [asdict(page) for page in self.pages],
+            "pages": [
+                {
+                    **asdict(page),
+                    "page_number": page.index + 1,
+                }
+                for page in self.pages
+            ],
             "images": self.image_assets,
         }
         if self.archive_file:
@@ -157,10 +187,15 @@ def _replace_detection_blocks(
                 markdown_blocks.append(f"![]({asset_name})")
             return "\n".join(markdown_blocks) if markdown_blocks else ""
 
-        return label
+        if _is_textual_label(label):
+            return ""
+
+        return f"<!-- {label} -->"
 
     processed = DETECTION_BLOCK.sub(_replacement, raw_text)
-    cleaned = processed.replace("<|grounding|>", "").strip()
+    cleaned = processed.replace("<|grounding|>", "")
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = cleaned.strip()
     return cleaned, page_assets
 
 
@@ -168,6 +203,7 @@ def process_pdf(
     pdf_path: Path,
     output_dir: Path,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    max_concurrency: Optional[int] = None,
 ) -> PdfProcessingResult:
     output_dir.mkdir(parents=True, exist_ok=True)
     images_dir = output_dir / "images"
@@ -191,7 +227,15 @@ def process_pdf(
     pages_buffer: list[Optional[PageResult]] = [None] * total_pages
     all_assets: list[str] = []
     completed_pages = 0
-    max_workers = max(1, getattr(settings, "pdf_max_concurrency", 2))
+    configured_max = (
+        max_concurrency if max_concurrency is not None else getattr(settings, "pdf_max_concurrency", 2)
+    )
+    try:
+        max_workers = int(configured_max)
+    except (TypeError, ValueError):
+        max_workers = 1
+    if max_workers <= 0:
+        max_workers = 1
 
     inflight: dict[Future[str], tuple[int, Image.Image]] = {}
 
@@ -267,18 +311,24 @@ def process_pdf(
 
     _notify(completed_pages, "正在生成 Markdown 摘要")
 
-    markdown_blocks: list[str] = []
+    page_blocks: list[str] = []
     for page in pages:
-        markdown_blocks.append(f"<!-- page:{page.index} -->")
-        markdown_blocks.append(page.markdown.strip())
-    combined_markdown = "\n\n---\n\n".join(filter(None, markdown_blocks))
+        page_header = f"<!-- page:{page.index + 1} -->"
+        page_content = page.markdown.strip()
+        block_parts = [page_header]
+        if page_content:
+            block_parts.append(page_content)
+        page_blocks.append("\n\n".join(block_parts))
+    combined_markdown = "\n\n---\n\n".join(block for block in page_blocks if block)
     markdown_path.write_text(combined_markdown, encoding="utf-8")
 
     raw_payload = {
         "pages": [
             {
                 "index": page.index,
+                "page_number": page.index + 1,
                 "raw_text": page.raw_text,
+                "markdown": page.markdown,
                 "boxes": page.boxes,
                 "image_assets": page.image_assets,
             }
