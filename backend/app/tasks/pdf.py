@@ -11,7 +11,7 @@ from threading import Event, Thread
 
 from ..celery_app import celery_app
 from ..config import settings
-from ..db.models import OcrTask
+from ..db.models import OcrTask, TaskStatus
 from ..db.session import get_session_factory
 from ..services.pdf_processor import process_pdf
 from ..services.storage import StorageManager
@@ -75,6 +75,10 @@ async def _run_pdf_task(task_id: str) -> None:
             task = await session.get(OcrTask, uuid.UUID(task_id))
             if task is None:
                 return
+            if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED}:
+                return
+            if message and "已排队" in message:
+                return
 
             payload = dict(task.result_payload or {})
             percent = 0.0
@@ -108,7 +112,6 @@ async def _run_pdf_task(task_id: str) -> None:
             settings.pdf_max_concurrency,
             task_id,
         )
-
         async with session_factory() as session:
             task = await session.get(OcrTask, uuid.UUID(task_id))
             if task is None:

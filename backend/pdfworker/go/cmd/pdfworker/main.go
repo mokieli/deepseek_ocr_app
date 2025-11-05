@@ -655,6 +655,26 @@ func getHTTPClient(maxConns int) *http.Client {
 }
 
 func runInference(ctx context.Context, cfg Config, imageB64 string) (string, error) {
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		text, err := invokeInference(ctx, cfg, imageB64)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+		if attempt < maxAttempts {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "pdfworker warning: empty response text after %d attempts (task=%s)\n", attempt, cfg.TaskID)
+		return "", nil
+	}
+	return "", nil
+}
+
+func invokeInference(ctx context.Context, cfg Config, imageB64 string) (string, error) {
 	reqPayload := inferenceRequest{
 		Prompt:    cfg.Prompt,
 		ImageB64:  imageB64,
@@ -693,9 +713,6 @@ func runInference(ctx context.Context, cfg Config, imageB64 string) (string, err
 	var parsed inferenceResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return "", err
-	}
-	if parsed.Text == "" {
-		return "", errors.New("empty response text")
 	}
 	return parsed.Text, nil
 }
@@ -1163,6 +1180,9 @@ func processPage(ctx context.Context, cfg Config, index int, imagePath string, i
 	rawText, err := runInference(ctx, cfg, imageB64)
 	if err != nil {
 		return pageResult{}, err
+	}
+	if strings.TrimSpace(rawText) == "" {
+		fmt.Fprintf(os.Stderr, "pdfworker notice: empty OCR text (task=%s page=%d image=%s)\n", cfg.TaskID, index, filepath.Base(imagePath))
 	}
 	markdown, assets, err := replaceDetectionBlocks(rawText, pageImg, index, imagesDir)
 	if err != nil {
