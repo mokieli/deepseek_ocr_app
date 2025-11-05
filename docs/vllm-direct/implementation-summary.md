@@ -19,6 +19,7 @@
 - **任务耗时追踪**：`OcrTask` 模型新增 `queued_at` / `started_at` / `finished_at` / `duration_ms` 字段，图片与 PDF 任务都会回写全链路耗时。
 - **API & 前端展示**：`TaskStatusResponse.timing` 与 `ImageOCRResponse.duration_ms` 暴露耗时信息，前端三个面板统一展示排队、开始与完成时间。
 - **数据库迁移**：首个 Alembic 迁移存放于 `backend/migrations/versions/`，在 Docker 环境下执行 `docker compose exec backend-direct alembic upgrade head` 以应用结构更新。
+- **Go PDF Worker**：PDF 处理改由 Go 子进程执行，位于 `backend/pdfworker/`。Docker 多阶段构建会将二进制放到 `/usr/local/bin/pdfworker`，通过 `PDF_WORKER_BIN`/`PDF_WORKER_DPI`/`PDF_WORKER_TIMEOUT_SECONDS` 环境变量控制。Python worker 仅负责启动子进程、监听 JSON 事件并回写进度/结果。
 
 ## 架构变化
 

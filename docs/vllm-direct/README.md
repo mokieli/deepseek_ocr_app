@@ -2,7 +2,7 @@
 
 ## 概述
 
-vLLM Direct 架构是基于 `vllm/vllm-openai:nightly` 官方镜像的单容器解决方案，直接使用 `AsyncLLMEngine` 进行推理，避免了 OpenAI API 的 token 限制。
+vLLM Direct 架构是基于 `vllm/vllm-openai:nightly` 官方镜像的单容器解决方案，直接使用 `AsyncLLMEngine` 进行推理，避免了 OpenAI API 的 token 限制。自 2025-12 起，PDF 处理链路进一步下沉为独立 Go 子进程（`pdfworker`），负责页面渲染、并发推理与资源打包，Python worker 仅保留调度与进度同步职责。
 
 ## 架构优势
 
@@ -96,6 +96,18 @@ curl "http://localhost:8001/api/tasks/<task_id>"
 - **Base**: `BASE_SIZE=1024, IMAGE_SIZE=1024, CROP_MODE=False`
 - **Large**: `BASE_SIZE=1280, IMAGE_SIZE=1280, CROP_MODE=False`
 - **Gundam** (推荐): `BASE_SIZE=1024, IMAGE_SIZE=640, CROP_MODE=True`
+
+### PDF 管线配置（Go 子进程）
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `PDF_MAX_CONCURRENCY` | `20` | 单个 worker 同时进行的推理请求数（与 GPU 显存相关） |
+| `PDF_RENDER_WORKERS` | `0` | PDF 渲染并发数（`0` 表示根据 CPU 自动选择） |
+| `PDF_WORKER_BIN` | `/usr/local/bin/pdfworker` | Go 子进程可执行文件路径 |
+| `PDF_WORKER_DPI` | `144` | `pdftoppm` 渲染 DPI，越大越清晰、也越耗时 |
+| `PDF_WORKER_TIMEOUT_SECONDS` | `300` | 调用 `/internal/infer` 的 HTTP 超时 |
+
+> Go 源码位于 `backend/pdfworker/`，Docker 多阶段构建会在镜像内编译该二进制。如需本地调试，可以手动运行 `go build ./backend/pdfworker/go/cmd/pdfworker` 并在 `.env` 中覆写 `PDF_WORKER_BIN`。
 
 ## 多卡推理
 

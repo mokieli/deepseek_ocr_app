@@ -88,6 +88,7 @@ def process_pdf(
         "crop_mode": settings.crop_mode,
         "max_concurrency": int(effective_concurrency),
         "request_timeout_seconds": settings.pdf_worker_timeout_seconds,
+        "render_workers": settings.pdf_render_workers,
     }
 
     result_payload = _run_worker(worker_bin, config, progress_callback)

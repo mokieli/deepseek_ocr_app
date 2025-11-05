@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Backend logic lives in `backend/app/`, with routers in `api/`, business logic in `services/`, shared schemas under `models/`, and helpers in `utils/`. Environment-specific dependencies sit in the various `backend/requirements-*.txt` files. The React interface is under `frontend/src/`, split into `components/`, `hooks/`, `api/`, and `utils/`. Visual assets are stored in `assets/`; model checkpoints and caches belong in `models/` (keep large downloads out of version control). Architectural references live in `docs/architecture.md`, `docs/vllm-direct/implementation-summary.md`, and the rest of `docs/`. The `third_party/` directory is vendored code—open issues before modifying it.
+Backend logic lives in `backend/app/`, with routers in `api/`, business logic in `services/`, shared schemas under `models/`, and helpers in `utils/`. Environment-specific dependencies sit in the various `backend/requirements-*.txt` files. The Go-based PDF pipeline sources live under `backend/pdfworker/` and are compiled into the runtime image during the Docker build. The React interface is under `frontend/src/`, split into `components/`, `hooks/`, `api/`, and `utils/`. Visual assets are stored in `assets/`; model checkpoints and caches belong in `models/` (keep large downloads out of version control). Architectural references live in `docs/architecture.md`, `docs/vllm-direct/implementation-summary.md`, and the rest of `docs/`. The `third_party/` directory is vendored code—open issues before modifying it.
 
 ## Build, Test, and Development Commands
 Use Docker for an end-to-end stack: `docker compose up --build` (or `./start-vllm-direct.sh`) builds the vLLM Direct backend and React frontend together. For local backend work, create a virtualenv and install dependencies with `python -m venv .venv && source .venv/bin/activate && pip install -r backend/requirements-vllm-direct.txt`, then run `uvicorn backend.app.main:app --reload`. Frontend development uses pnpm: `npm install -g pnpm`, `pnpm install`, and `pnpm run dev`; build output with `pnpm run build`.
@@ -22,7 +22,7 @@ Commits use concise sentence-case summaries (e.g., `Update README.md with new co
 - Ensure the Docker build stage runs `pnpm install --prod=false` so Tailwind (a dev dependency) is present when `pnpm run build` executes.
 - When migrating from the Vite scaffold, update `index.html` to load `/src/main.tsx` if the JSX entrypoint was removed.
 
-## Recent Enhancements (2025-11)
+## Recent Enhancements (2025-12)
 - **Shared vLLM service** – FastAPI 暴露 `/internal/infer` 供 Celery worker 复用同一个 AsyncLLMEngine，避免重复加载模型。Worker 通过 `WORKER_REMOTE_INFER_URL`、`INTERNAL_API_TOKEN` 与 `PDF_MAX_CONCURRENCY` 控制访问与并发。
 - **PDF 管线升级** – `process_pdf` 采用线程内并发，实时回写进度 (`TaskStatusResponse.progress`)，产出 Markdown、原始 JSON 与自动打包的 ZIP。回调会在 `backend/app/tasks/pdf.py` 中异步落库。
 - **Grounding 解析增强** – `GroundingParser` 支持全角符号清洗、嵌套坐标和标记裁剪，确保检测框始终可用。
@@ -30,3 +30,4 @@ Commits use concise sentence-case summaries (e.g., `Update README.md with new co
 - **Worker 稳定性** – Celery PDF 任务复用专用事件循环线程，避免 asyncio run-loop 混用导致的 “Future attached to a different loop” 异常。
 - **部署注意事项** – Docker Compose 已为 worker 注入新的内部推理环境变量；重启前确认 `.env` 中的 token、URL 一致，确保健康检查正常。
 - **任务耗时追踪** – `OcrTask` 记录 `queued_at`/`started_at`/`finished_at`/`duration_ms`，同步图片与 PDF 任务都会回写耗时并在前端显示。新增 Alembic 迁移位于 `backend/migrations/versions/`，通过 `docker compose exec backend-direct alembic upgrade head` 应用。
+- **Go PDF Worker** – `backend/app/services/pdf_processor.py` 现委托独立的 Go 二进制处理 PDF 渲染、资产裁剪与 ZIP 打包。Dockerfile 在构建阶段编译位于 `backend/pdfworker/` 下的源码，运行时通过 `PDF_WORKER_BIN`、`PDF_WORKER_DPI` 与 `PDF_WORKER_TIMEOUT_SECONDS` 环境变量进行配置。

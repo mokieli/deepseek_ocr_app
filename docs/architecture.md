@@ -17,20 +17,25 @@
 │ React 前端(Nginx)│◄───────────────►│ FastAPI 服务 (Uvicorn) │
 └─────────────────┘                  │  /app/api/routes.py   │
                                      └───────────┬───────────┘
-                                                 │ Celery 任务
-                                     ┌───────────▼───────────┐
-                                     │ Worker (Celery + Solo)│
-                                     │ /app/tasks/pdf.py     │
-                                     └───────────┬───────────┘
-                                                 │ 内部推理 API
-                                     ┌───────────▼───────────┐
-                                     │ AsyncLLMEngine (vLLM) │
-                                     │ /internal/infer       │
-                                     └───────────┬───────────┘
-                                                 │
-                                     ┌───────────▼───────────┐
-                                     │   GPU + CUDA 驱动     │
-                                     └───────────────────────┘
+                                                │ Celery 任务
+                                    ┌───────────▼───────────┐
+                                    │ Worker (Celery + Solo)│
+                                    │ /app/tasks/pdf.py     │
+                                    └───────────┬───────────┘
+                                                │ 启动 Go 子进程
+                                    ┌───────────▼───────────┐
+                                    │ pdfworker (Go)        │
+                                    │ backend/pdfworker/    │
+                                    └───────────┬───────────┘
+                                                │ 内部推理 API
+                                    ┌───────────▼───────────┐
+                                    │ AsyncLLMEngine (vLLM) │
+                                    │ /internal/infer       │
+                                    └───────────┬───────────┘
+                                                │
+                                    ┌───────────▼───────────┐
+                                    │   GPU + CUDA 驱动     │
+                                    └───────────────────────┘
 
 支撑服务：PostgreSQL（任务状态）、Redis（Celery broker / backend）、共享文件系统 `/data/ocr`（输入输出资产）。
 ```
@@ -47,10 +52,9 @@
 - `vllm_direct_engine.py`：FastAPI 进程的 vLLM 封装，负责加载模型、接受推理请求。
 - `worker_engine.py`：Celery 进程推理适配层，可选直接加载模型或通过 HTTP 请求内部端点（默认）。
 - `pdf_processor.py`：
-  - 将 PDF 渲染为高分辨率图片。
-  - 并行推理（受 `PDF_MAX_CONCURRENCY` 控制）并裁剪检测到的图片区域。
-  - 写出 `result.md`（逐页插入 `<!-- page:x -->` 注释、`---` 分隔符）、`raw.json`（原始文本 + 检测框）与 `result.zip`（Markdown + JSON + assets）。
-  - 处理过程中持续回调进度，写入数据库。
+  - 构造任务配置并启动 Go 编译出的 `pdfworker` 二进制，消费其逐行输出的 JSON 事件。
+  - Go 子进程负责 PDF 渲染（`pdftoppm`）、并发调用 `/internal/infer`、裁剪检测框图片、生成 Markdown/JSON 以及打包 ZIP。
+  - Python 侧仅负责进度回调、错误冒泡和把最终 payload 映射为 `PdfProcessingResult`。
 - `grounding_parser.py`：解析 `<|ref|><|det|>` 标签，支持全角符号清洗、嵌套坐标。
 - 其它辅助模块：`prompt_builder.py`、`storage.py` 等。
 
@@ -59,12 +63,13 @@
 - 配置：`backend/app/config.py` 使用 `pydantic-settings` 暴露以下关键变量：
   - `WORKER_REMOTE_INFER_URL`、`INTERNAL_API_TOKEN` 用于 worker 与 API 同步推理。
   - `PDF_MAX_CONCURRENCY` 控制每个 worker 并发提交推理请求的数量。
+  - `PDF_RENDER_WORKERS` 控制 Go 子进程渲染 PDF 页面的线程池大小（`0` 表示按 CPU 自动分配）。
   - 其余模型、GPU、数据库、存储参数同以往。
 
 ### 任务执行
 - `backend/app/tasks/pdf.py`
   - Celery 入口将 `_run_pdf_task` 派发到专用的 `pdf-task-loop` 线程，保证 asyncpg 连接与 SQLAlchemy 会话绑定到固定事件循环，避免 “Future attached to a different loop”。
-  - `_run_pdf_task` 继续通过 `asyncio.to_thread(process_pdf, …)` 执行 CPU 密集型 PDF 处理，同时 `_update_progress` 协程安全回写进度。
+  - `_run_pdf_task` 通过 `asyncio.to_thread(process_pdf, …)` 启动 Go 子进程并转发其进度事件，同时 `_update_progress` 协程安全回写进度。
   - 成功后调用 `mark_succeeded`；失败时保留最后一次进度并写入错误信息。
 
 ## 前端组件
@@ -87,10 +92,10 @@
 ### PDF OCR
 1. 上传 PDF → 存储到 `/data/ocr/{task_id}/input.pdf`，写入 `OcrTask` 记录，Celery 入队。
 2. Worker:
-   - 渲染各页 → `Image`.
-   - 使用 `worker_engine.submit_infer` 并发调用 `/internal/infer`（带 `X-Internal-Token`）。
-   - 生成 Markdown 片段、裁剪图片、解析检测框 → 写入 `PageResult`。
-   - 每完成一页调用进度回调，数据库中 `result_payload.progress` 获得 `current/total/percent/message`。
+   - 通过 `pdf_processor` 启动 Go `pdfworker` 子进程，按配置 DPI 渲染页面并输出 JSON 行事件。
+   - 子进程内置并发池调用 `/internal/infer`（带 `X-Internal-Token`，受 `PDF_MAX_CONCURRENCY`、`PDF_WORKER_TIMEOUT_SECONDS` 约束），并依据 `PDF_RENDER_WORKERS` 控制 `pdftoppm` 渲染页面的并行度。
+   - 负责裁剪检测框图片、生成 Markdown/JSON，以及打包 `result.zip`，压缩阶段会持续输出 “正在压缩” 进度事件。
+   - Python 端读取进度事件更新 `result_payload.progress`，在接收最终 `result` 事件后写入数据库。
 3. 结束时输出：
    - `result.md`：页面注释 + 分隔线，保留模型原生 Markdown。
    - `raw.json`：原始文本、检测框、资产列表。
@@ -130,6 +135,9 @@
   - `WORKER_REMOTE_INFER_URL`：默认 `http://backend-direct:8001/internal/infer`。
   - `INTERNAL_API_TOKEN`：API 与 worker 共享的密钥，前后端需保持一致。
   - `PDF_MAX_CONCURRENCY`：单 worker 并发推理页数，推荐根据 GPU 显存调整（默认 3）。
+  - `PDF_WORKER_BIN`：Go 子进程路径（镜像默认 `/usr/local/bin/pdfworker`，若自编译需覆写）。
+  - `PDF_WORKER_DPI`：`pdftoppm` 渲染 DPI，决定页面清晰度与生成体积（默认 144）。
+  - `PDF_WORKER_TIMEOUT_SECONDS`：推理 HTTP 请求超时（默认 300 秒，必要时根据网络情况调大/调小）。
 
 - 常用命令：
   - 全栈启动：`docker compose up --build`.
@@ -138,10 +146,11 @@
 
 - 故障排查：
   - 若 worker 报 `Forbidden`，检查 `INTERNAL_API_TOKEN`。
+  - 若日志出现 “PDF worker binary not found”，确认 Docker 镜像包含 `pdfworker` 或在 `.env` 中指向自定义路径。
   - 若进度永远停留在 “任务已启动”，确认 worker 能访问 `/internal/infer`，并检查 PostgreSQL/Redis 连接。
   - Grounding 解析失败通常伴随模型输出格式变更，可开启日志排查 `sanitize_coords_text`。
 - 数据库迁移：
   - 新增/修改表结构会同步提交到 `backend/migrations/versions/`。
   - Docker 环境下执行 `docker compose exec backend-direct alembic upgrade head` 应用迁移；本地开发可使用 `alembic upgrade head`（需配置 `DATABASE_URL`）。
 
-最新修改日期：2025-12。
+最新修改日期：2025-12-05。

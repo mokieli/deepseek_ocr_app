@@ -8,6 +8,7 @@
 - ✅ **单容器推理链路**：直接运行在官方 `vllm/vllm-openai:nightly` 镜像之上，消除 OpenAI API token 限制
 - ✅ **高吞吐 OCR**：`AsyncLLMEngine` + DeepSeek 多模态模型，支持长文档与多种模式（Plain/Describe/Find/Freeform）
 - ✅ **全新后端**：FastAPI + Pydantic Settings，生命周期内自动加载/释放模型，暴露完整健康检查
+- ✅ **Go 驱动的 PDF 管线**：多阶段 Docker 构建内置 `pdfworker` 二进制，负责渲染、推理调度、裁剪与 ZIP 打包，Python worker 仅做调度与回写
 - ✅ **交互式前端**：React + TailwindCSS + Framer Motion，支持拖放上传、边界框可视化与结果导出
 - ✅ **可观测性友好**：`docker compose` 自带健康检查、GPU 卷挂载、配置集中在 `.env`
 
@@ -22,6 +23,7 @@ deepseek_ocr_app/
 │   │   ├── vllm_models/        # DeepSeek 模型适配层
 │   │   ├── config.py           # Pydantic Settings
 │   │   └── main.py             # 应用入口（version=4.0.0）
+│   ├── pdfworker/              # Go PDF worker 源码（构建期编译为二进制）
 │   ├── Dockerfile.vllm-direct  # 后端镜像
 │   └── requirements-vllm-direct.txt
 ├── frontend/                   # React 前端（部署为 Nginx 静态站点）
@@ -77,6 +79,11 @@ docker compose up --build backend-direct
 | `GPU_MEMORY_UTILIZATION` | `0.9` | vLLM 显存利用率上限 |
 | `MAX_MODEL_LEN` | `8192` | 最大 token 长度 |
 | `BASE_SIZE` / `IMAGE_SIZE` / `CROP_MODE` | `1024 / 640 / True` | Gundam 预设，兼顾速度与质量 |
+| `PDF_MAX_CONCURRENCY` | `20` | Go worker 同时排队的页级推理请求数 |
+| `PDF_RENDER_WORKERS` | `0` | PDF 渲染并发数（`0` 表示按 CPU 自动选择） |
+| `PDF_WORKER_BIN` | `/usr/local/bin/pdfworker` | Go 子进程路径（容器内默认值，可自定义） |
+| `PDF_WORKER_DPI` | `144` | PDF 渲染 DPI，越大越清晰/越耗时 |
+| `PDF_WORKER_TIMEOUT_SECONDS` | `300` | 调用 `/internal/infer` 的 HTTP 超时 |
 | `API_PORT` / `FRONTEND_PORT` | `8001 / 3000` | 容器对外暴露端口 |
 | `MEMORY_LIMIT` | `50g` | backend 容器内存限制 |
 
@@ -84,6 +91,7 @@ docker compose up --build backend-direct
 
 ## 🏗️ 架构概览
 - 后端：FastAPI 应用在启动阶段通过 `VLLMDirectEngine` 注册 DeepSeek-OCR 模型，所有推理请求均直接调用 `AsyncLLMEngine.generate`
+- PDF 异步管线：Celery worker 启动 Go `pdfworker` 子进程（`backend/pdfworker/`），该进程使用 `pdftoppm` 渲染页面、并发调用 `/internal/infer`、裁剪检测框并写出 Markdown/JSON/ZIP，期间通过 JSON 行事件回推进度
 - 前端：React + Vite 开发，构建后由 Nginx 提供静态资源，支持图片即时识别与 PDF 异步任务轮询
 - 数据流：上传图像 → 后端预处理 → vLLM 推理 → 返回文本、边界框与可下载结果（PDF 场景通过队列异步计算）
 
@@ -201,6 +209,7 @@ pnpm run dev
 - **模型下载缓慢**：确认 `MODELSCOPE_CACHE` 挂载正确，可提前放入本地缓存
 - **GPU 未被识别**：`nvidia-smi` / `docker info | grep nvidia` 检查 runtime 配置
 - **健康检查失败**：`docker compose logs -f backend-direct` 查看加载日志，检查显存设置
+- **提示 “PDF worker binary not found”**：重新构建镜像（`docker compose build backend-direct backend-worker`），或在 `.env` 中用 `PDF_WORKER_BIN` 指向自编译的 Go 二进制
 - **端口冲突**：在 `.env` 中调整 `API_PORT` / `FRONTEND_PORT`
 
 更多排障建议见 [docs/vllm-direct/version-compatibility.md](docs/vllm-direct/version-compatibility.md)。

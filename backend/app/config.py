@@ -113,6 +113,11 @@ class Settings(BaseSettings):
         alias="PDF_WORKER_TIMEOUT_SECONDS",
         description="Go worker 调用推理接口的超时时间"
     )
+    pdf_render_workers: int = Field(
+        default=0,
+        alias="PDF_RENDER_WORKERS",
+        description="PDF 渲染并发数（0 表示按 CPU 自动选择）"
+    )
 
     # 默认提示词
     image_prompt: str = Field(

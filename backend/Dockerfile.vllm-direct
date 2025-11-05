@@ -3,8 +3,8 @@
 
 FROM golang:1.25.3-bookworm AS pdfworker-builder
 WORKDIR /workspace
-COPY go.mod ./
-COPY go/ ./go/
+COPY pdfworker/go.mod ./go.mod
+COPY pdfworker/go/ ./go/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/pdfworker ./go/cmd/pdfworker
 
 FROM vllm/vllm-openai:nightly

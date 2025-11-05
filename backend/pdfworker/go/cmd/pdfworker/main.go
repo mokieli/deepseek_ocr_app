@@ -14,11 +14,13 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"io"
+	"hash/crc32"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +41,7 @@ type Config struct {
 	ImageSize      int    `json:"image_size"`
 	CropMode       bool   `json:"crop_mode"`
 	MaxConcurrency int    `json:"max_concurrency"`
+	RenderWorkers  int    `json:"render_workers"`
 	RequestTimeout int    `json:"request_timeout_seconds"`
 }
 
@@ -76,11 +79,28 @@ type pageResult struct {
 	Boxes       []map[string]interface{}
 }
 
+type pageJob struct {
+	index     int
+	imagePath string
+}
+
+type archiveEntry struct {
+	Name   string
+	Path   string
+	Method uint16
+}
+
 type eventWriter struct {
 	enc *json.Encoder
 	w   *bufio.Writer
 	mu  sync.Mutex
 }
+
+var (
+	httpClientMu          sync.Mutex
+	sharedHTTPClient      *http.Client
+	sharedHTTPClientLimit int
+)
 
 func newEventWriter(writer io.Writer) *eventWriter {
 	buf := bufio.NewWriter(writer)
@@ -302,7 +322,7 @@ func parseDetections(raw string, width, height int) []map[string]interface{} {
 	matches := detectionBlock.FindAllStringSubmatch(raw, -1)
 	if matches == nil {
 		return boxes
-+}
+	}
 	labelIdx := detectionBlock.SubexpIndex("label")
 	coordsIdx := detectionBlock.SubexpIndex("coords")
 	for _, match := range matches {
@@ -430,6 +450,151 @@ func renderPDF(ctx context.Context, cfg Config, workDir string) ([]string, error
 	return matches, nil
 }
 
+func countPDFPages(ctx context.Context, pdfPath string) (int, error) {
+	cmd := exec.CommandContext(ctx, "pdfinfo", pdfPath)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("pdfinfo failed: %w", err)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "Pages:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				if total, convErr := strconv.Atoi(parts[1]); convErr == nil {
+					return total, nil
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return 0, errors.New("failed to determine page count from pdfinfo output")
+}
+
+func renderSinglePage(ctx context.Context, cfg Config, workDir string, page int) (string, error) {
+	if cfg.DPI <= 0 {
+		cfg.DPI = 144
+	}
+	prefix := filepath.Join(workDir, "page")
+	args := []string{
+		"-jpeg",
+		"-r", strconv.Itoa(cfg.DPI),
+		"-f", strconv.Itoa(page),
+		"-l", strconv.Itoa(page),
+		cfg.PDFPath,
+		prefix,
+	}
+	cmd := exec.CommandContext(ctx, "pdftoppm", args...)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("pdftoppm failed on page %d: %w", page, err)
+	}
+	return findRenderedImage(prefix, page)
+}
+
+func findRenderedImage(prefix string, page int) (string, error) {
+	candidates := []string{
+		fmt.Sprintf("%s-%d.jpg", prefix, page),
+		fmt.Sprintf("%s-%02d.jpg", prefix, page),
+		fmt.Sprintf("%s-%03d.jpg", prefix, page),
+		fmt.Sprintf("%s-%04d.jpg", prefix, page),
+		fmt.Sprintf("%s-%05d.jpg", prefix, page),
+		fmt.Sprintf("%s-%06d.jpg", prefix, page),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	matches, err := filepath.Glob(fmt.Sprintf("%s-*.jpg", prefix))
+	if err != nil {
+		return "", err
+	}
+	for _, match := range matches {
+		if pageIndexFromName(match) == page-1 {
+			return match, nil
+		}
+	}
+	return "", fmt.Errorf("rendered image not found for page %d", page)
+}
+
+func renderPDFAsync(ctx context.Context, cfg Config, workDir string) (<-chan pageJob, <-chan error, int, error) {
+	totalPages, err := countPDFPages(ctx, cfg.PDFPath)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	buffer := cfg.MaxConcurrency
+	if buffer <= 0 {
+		buffer = cfg.RenderWorkers
+	}
+	if buffer <= 0 {
+		buffer = runtime.NumCPU()
+	}
+	jobs := make(chan pageJob, maxInt(buffer, 1))
+	errChan := make(chan error, 1)
+	go func() {
+		defer close(jobs)
+		defer close(errChan)
+		renderCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		workers := cfg.RenderWorkers
+		if workers <= 0 {
+			workers = maxInt(runtime.NumCPU(), 2)
+			if workers > 8 {
+				workers = 8
+			}
+		}
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+		var once sync.Once
+		sendErr := func(err error) {
+			if err == nil {
+				return
+			}
+			once.Do(func() {
+				errChan <- err
+				cancel()
+			})
+		}
+		for page := 1; page <= totalPages; page++ {
+			if renderCtx.Err() != nil {
+				break
+			}
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(p int) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				path, renderErr := renderSinglePage(renderCtx, cfg, workDir, p)
+				if renderErr != nil {
+					sendErr(renderErr)
+					return
+				}
+				job := pageJob{index: p - 1, imagePath: path}
+				select {
+				case jobs <- job:
+				case <-renderCtx.Done():
+				}
+			}(page)
+		}
+		wg.Wait()
+	}()
+	return jobs, errChan, totalPages, nil
+}
+
+func firstError(ch <-chan error) error {
+	for err := range ch {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func pageIndexFromName(path string) int {
 	base := filepath.Base(path)
 	idx := strings.LastIndex(base, "-")
@@ -452,6 +617,43 @@ func encodeImageToBase64(path string) (string, error) {
 	return string(buf), nil
 }
 
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func getHTTPClient(maxConns int) *http.Client {
+	if maxConns <= 0 {
+		maxConns = 2
+	}
+	httpClientMu.Lock()
+	defer httpClientMu.Unlock()
+	if sharedHTTPClient != nil && maxConns <= sharedHTTPClientLimit {
+		return sharedHTTPClient
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		MaxConnsPerHost:     maxInt(maxConns, 4),
+		MaxIdleConnsPerHost: maxInt(maxConns, 4),
+		MaxIdleConns:        maxInt(maxConns*2, 32),
+		IdleConnTimeout:     90 * time.Second,
+	}
+	sharedHTTPClient = &http.Client{
+		Transport: transport,
+	}
+	sharedHTTPClientLimit = maxConns
+	return sharedHTTPClient
+}
+
 func runInference(ctx context.Context, cfg Config, imageB64 string) (string, error) {
 	reqPayload := inferenceRequest{
 		Prompt:    cfg.Prompt,
@@ -464,10 +666,14 @@ func runInference(ctx context.Context, cfg Config, imageB64 string) (string, err
 	if err != nil {
 		return "", err
 	}
-	httpClient := &http.Client{
-		Timeout: time.Duration(cfg.RequestTimeout) * time.Second,
+	client := getHTTPClient(cfg.MaxConcurrency)
+	reqCtx := ctx
+	var cancel context.CancelFunc
+	if cfg.RequestTimeout > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, time.Duration(cfg.RequestTimeout)*time.Second)
+		defer cancel()
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.InferURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(reqCtx, http.MethodPost, cfg.InferURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -475,7 +681,7 @@ func runInference(ctx context.Context, cfg Config, imageB64 string) (string, err
 	if cfg.AuthToken != "" {
 		request.Header.Set("X-Internal-Token", cfg.AuthToken)
 	}
-	resp, err := httpClient.Do(request)
+	resp, err := client.Do(request)
 	if err != nil {
 		return "", err
 	}
@@ -550,51 +756,144 @@ func writeJSON(outputPath string, pages []pageResult) error {
 	return enc.Encode(payload)
 }
 
-func writeArchive(archivePath string, markdownPath string, jsonPath string, images []string, outputDir string) error {
+func shouldStore(name string) bool {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".jpg"),
+		strings.HasSuffix(lower, ".jpeg"),
+		strings.HasSuffix(lower, ".png"),
+		strings.HasSuffix(lower, ".webp"),
+		strings.HasSuffix(lower, ".gif"):
+		return true
+	default:
+		return false
+	}
+}
+
+func prepareArchiveHeader(entry archiveEntry) (*zip.FileHeader, error) {
+	info, err := os.Stat(entry.Path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory", entry.Path)
+	}
+	header := &zip.FileHeader{
+		Name:   entry.Name,
+		Method: entry.Method,
+	}
+	header.SetModTime(info.ModTime())
+	header.UncompressedSize64 = uint64(info.Size())
+	header.ExternalAttrs = (uint32(info.Mode().Perm()) & 0o777) << 16
+	if entry.Method == zip.Store {
+		f, err := os.Open(entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		hash := crc32.NewIEEE()
+		if _, err := io.Copy(hash, f); err != nil {
+			return nil, err
+		}
+		header.CRC32 = hash.Sum32()
+	}
+	return header, nil
+}
+
+func writeArchive(archivePath string, entries []archiveEntry, progress func(done int, total int, name string)) error {
+	if len(entries) == 0 {
+		return nil
+	}
 	file, err := os.Create(archivePath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+
 	zipWriter := zip.NewWriter(file)
-	add := func(name string) error {
-		fullPath := filepath.Join(outputDir, name)
-		info, err := os.Stat(fullPath)
+
+	type job struct {
+		index int
+		entry archiveEntry
+	}
+	type result struct {
+		index  int
+		header *zip.FileHeader
+		entry  archiveEntry
+		err    error
+	}
+
+	tasks := make(chan job)
+	results := make(chan result, len(entries))
+	workerCount := minInt(maxInt(2, runtime.NumCPU()/2), len(entries))
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range tasks {
+				header, err := prepareArchiveHeader(task.entry)
+				results <- result{
+					index:  task.index,
+					header: header,
+					entry:  task.entry,
+					err:    err,
+				}
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	for idx, entry := range entries {
+		tasks <- job{index: idx, entry: entry}
+	}
+	close(tasks)
+
+	prepared := make([]result, len(entries))
+	for res := range results {
+		if res.err != nil {
+			return res.err
+		}
+		prepared[res.index] = res
+	}
+
+	for i, item := range prepared {
+		header := item.header
+		writer, err := zipWriter.CreateHeader(header)
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			return nil
-		}
-		source, err := os.Open(fullPath)
+		source, err := os.Open(item.entry.Path)
 		if err != nil {
 			return err
 		}
-		defer source.Close()
-		w, err := zipWriter.Create(name)
-		if err != nil {
+		if _, err := io.Copy(writer, source); err != nil {
+			source.Close()
 			return err
 		}
-		_, err = io.Copy(w, source)
-		return err
-	}
-	if err := add(filepath.Base(markdownPath)); err != nil {
-		return err
-	}
-	if err := add(filepath.Base(jsonPath)); err != nil {
-		return err
-	}
-	for _, asset := range images {
-		if err := add(asset); err != nil {
-			return err
+		source.Close()
+		if progress != nil {
+			progress(i+1, len(entries), header.Name)
 		}
 	}
-	return zipWriter.Close()
+
+	if err := zipWriter.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func ensureDefaultConfig(cfg *Config) {
 	if cfg.MaxConcurrency <= 0 {
 		cfg.MaxConcurrency = 2
+	}
+	if cfg.RenderWorkers < 0 {
+		cfg.RenderWorkers = 0
 	}
 	if cfg.RequestTimeout <= 0 {
 		cfg.RequestTimeout = 300
@@ -643,16 +942,20 @@ func main() {
 	}
 	defer os.RemoveAll(workDir)
 
-	ctx := context.Background()
-	writer.Progress(0, 0, "正在渲染 PDF 页面")
-	pages, err := renderPDF(ctx, cfg, workDir)
-	if err != nil {
-		writer.Error(err)
-		os.Exit(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var progressTotal int64 = 1
+	reportProgress := func(current int, message string) {
+		total := int(atomic.LoadInt64(&progressTotal))
+		if total < 1 {
+			total = 1
+		}
+		writer.Progress(current, total, message)
 	}
-	totalPages := len(pages)
-	if totalPages == 0 {
-		writer.Progress(0, 0, "PDF 中未检测到页面")
+
+	emitEmptyResult := func() {
+		reportProgress(0, "PDF 中未检测到页面")
 		writer.Result(map[string]interface{}{
 			"markdown_file": "",
 			"raw_json_file": "",
@@ -665,31 +968,60 @@ func main() {
 				"message": "已完成",
 			},
 		})
-		return
 	}
 
-	writer.Progress(0, totalPages, "PDF 页面渲染完成")
-	type job struct {
-		index     int
-		imagePath string
+	reportProgress(0, "正在准备 PDF 渲染")
+	jobStream, renderErrStream, totalPages, err := renderPDFAsync(ctx, cfg, workDir)
+	if err != nil {
+		reportProgress(0, "PDF 渲染回退到串行模式")
+		pages, fallbackErr := renderPDF(ctx, cfg, workDir)
+		if fallbackErr != nil {
+			writer.Error(fallbackErr)
+			os.Exit(1)
+		}
+		totalPages = len(pages)
+		if totalPages == 0 {
+			emitEmptyResult()
+			return
+		}
+		fallbackJobs := make(chan pageJob, maxInt(totalPages, 1))
+		fallbackErrStream := make(chan error, 1)
+		go func() {
+			defer close(fallbackJobs)
+			defer close(fallbackErrStream)
+			for i, path := range pages {
+				fallbackJobs <- pageJob{index: i, imagePath: path}
+			}
+		}()
+		jobStream = fallbackJobs
+		renderErrStream = fallbackErrStream
+	} else {
+		if totalPages == 0 {
+			emitEmptyResult()
+			return
+		}
 	}
-	var jobs []job
-	for i, path := range pages {
-		jobs = append(jobs, job{index: i, imagePath: path})
-	}
+
+	initialTotal := maxInt(totalPages+3, 1)
+	atomic.StoreInt64(&progressTotal, int64(initialTotal))
+	reportProgress(0, "PDF 页面渲染中")
 
 	results := make([]pageResult, totalPages)
 	errChan := make(chan error, 1)
 	inflight := int64(0)
 	completed := int64(0)
 
-	sem := make(chan struct{}, cfg.MaxConcurrency)
+	semCapacity := cfg.MaxConcurrency
+	if semCapacity <= 0 {
+		semCapacity = 1
+	}
+	sem := make(chan struct{}, semCapacity)
 	var wg sync.WaitGroup
-	for _, job := range jobs {
+	for job := range jobStream {
 		wg.Add(1)
 		sem <- struct{}{}
-		writer.Progress(int(atomic.LoadInt64(&completed)), totalPages, fmt.Sprintf("第 %d/%d 页已排队", job.index+1, totalPages))
-		go func(j job) {
+		reportProgress(int(atomic.LoadInt64(&completed)), fmt.Sprintf("第 %d/%d 页已排队", job.index+1, totalPages))
+		go func(j pageJob) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			atomic.AddInt64(&inflight, 1)
@@ -704,43 +1036,90 @@ func main() {
 			}
 			results[j.index] = pageRes
 			done := int(atomic.AddInt64(&completed, 1))
-			writer.Progress(done, totalPages, fmt.Sprintf("第 %d/%d 页识别完成", j.index+1, totalPages))
+			reportProgress(done, fmt.Sprintf("第 %d/%d 页识别完成", j.index+1, totalPages))
 		}(job)
 	}
+
+	renderErr := firstError(renderErrStream)
+
 	go func() {
 		wg.Wait()
 		close(errChan)
 	}()
+
 	if err := <-errChan; err != nil {
 		writer.Error(err)
 		os.Exit(1)
 	}
+	if renderErr != nil {
+		writer.Error(renderErr)
+		os.Exit(1)
+	}
 
-	writer.Progress(int(totalPages), totalPages, "正在生成 Markdown 摘要")
+	pagesDone := int(atomic.LoadInt64(&completed))
+	reportProgress(pagesDone, "正在生成 Markdown 摘要")
 	markdownPath := filepath.Join(cfg.OutputDir, "result.md")
 	if err := writeMarkdown(markdownPath, results); err != nil {
 		writer.Error(err)
 		os.Exit(1)
 	}
 
-	writer.Progress(int(totalPages), totalPages, "正在生成原始 JSON")
+	pagesDone++
+	reportProgress(pagesDone, "正在生成原始 JSON")
 	rawJSONPath := filepath.Join(cfg.OutputDir, "raw.json")
 	if err := writeJSON(rawJSONPath, results); err != nil {
 		writer.Error(err)
 		os.Exit(1)
 	}
+	pagesDone++
 
 	var allAssets []string
 	for _, page := range results {
 		allAssets = append(allAssets, page.ImageAssets...)
 	}
 
-	writer.Progress(int(totalPages), totalPages, "正在打包结果资源")
+	entries := make([]archiveEntry, 0, len(allAssets)+2)
+	entries = append(entries, archiveEntry{
+		Name:   filepath.Base(markdownPath),
+		Path:   markdownPath,
+		Method: zip.Deflate,
+	})
+	entries = append(entries, archiveEntry{
+		Name:   filepath.Base(rawJSONPath),
+		Path:   rawJSONPath,
+		Method: zip.Deflate,
+	})
+	for _, asset := range allAssets {
+		fullPath := filepath.Join(cfg.OutputDir, asset)
+		method := zip.Deflate
+		if shouldStore(asset) {
+			method = zip.Store
+		}
+		entries = append(entries, archiveEntry{
+			Name:   asset,
+			Path:   fullPath,
+			Method: method,
+		})
+	}
+
+	archiveTotal := len(entries)
+	finalTotal := pagesDone + archiveTotal
+	if finalTotal < pagesDone+1 {
+		finalTotal = pagesDone + 1
+	}
+	atomic.StoreInt64(&progressTotal, int64(finalTotal))
+	reportProgress(pagesDone, fmt.Sprintf("正在压缩结果资源 (0/%d)", archiveTotal))
+
 	archivePath := filepath.Join(cfg.OutputDir, "result.zip")
-	if err := writeArchive(archivePath, markdownPath, rawJSONPath, allAssets, cfg.OutputDir); err != nil {
+	baseProgress := pagesDone
+	if err := writeArchive(archivePath, entries, func(done int, total int, name string) {
+		reportProgress(baseProgress+done, fmt.Sprintf("正在压缩结果资源 (%d/%d)", done, total))
+	}); err != nil {
 		writer.Error(err)
 		os.Exit(1)
 	}
+
+	reportProgress(finalTotal, "全部页面处理完成")
 
 	payload := map[string]interface{}{
 		"markdown_file": filepath.Base(markdownPath),
@@ -762,14 +1141,13 @@ func main() {
 		"images":       allAssets,
 		"archive_file": filepath.Base(archivePath),
 		"progress": map[string]interface{}{
-			"current": totalPages,
-			"total":   totalPages,
+			"current": finalTotal,
+			"total":   finalTotal,
 			"percent": 100.0,
 			"message": "已完成",
 		},
 	}
 	payload["total_pages"] = totalPages
-	writer.Progress(totalPages, totalPages, "全部页面处理完成")
 	writer.Result(payload)
 }
 
