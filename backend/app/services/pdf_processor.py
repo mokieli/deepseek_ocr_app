@@ -1,53 +1,15 @@
-"""PDF OCR 处理逻辑"""
+"""PDF 处理通过 Go worker 完成"""
 
 from __future__ import annotations
 
-import ast
-import io
 import json
-import re
-import zipfile
-from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, Future, wait
-from dataclasses import dataclass, asdict
+import subprocess
+import tempfile
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
-
-import fitz  # type: ignore
-from PIL import Image
+from typing import Any, Callable, Optional
 
 from ..config import settings
-from ..services.grounding_parser import GroundingParser
-from .worker_engine import worker_engine
-
-
-DETECTION_BLOCK = re.compile(
-    r"<\|ref\|>(?P<label>.*?)<\|/ref\|>\s*<\|det\|>(?P<coords>.*?)<\|/det\|>",
-    re.DOTALL,
-)
-
-
-_TEXTUAL_LABEL_KEYWORDS = (
-    "text",
-    "title",
-    "subtitle",
-    "sub_title",
-    "caption",
-    "paragraph",
-    "header",
-    "footer",
-    "footnote",
-    "list",
-    "figure",
-    "table",
-    "page_number",
-)
-
-
-def _is_textual_label(label: str) -> bool:
-    normalized = label.strip().lower()
-    if not normalized:
-        return True
-    return any(keyword in normalized for keyword in _TEXTUAL_LABEL_KEYWORDS)
 
 
 @dataclass
@@ -92,111 +54,8 @@ class PdfProcessingResult:
         return payload
 
 
-def _render_pdf(pdf_path: Path, dpi: int = 144) -> list[Image.Image]:
-    images: list[Image.Image] = []
-    doc = fitz.open(str(pdf_path))
-    zoom = dpi / 72.0
-    matrix = fitz.Matrix(zoom, zoom)
-    for idx in range(doc.page_count):
-        page = doc[idx]
-        pix = page.get_pixmap(matrix=matrix, alpha=False)
-        image = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-        images.append(image)
-    doc.close()
-    return images
-
-
-def _parse_coords(coords_text: str) -> list[list[float]]:
-    coords_text = GroundingParser.sanitize_coords_text(coords_text)
-    try:
-        parsed = ast.literal_eval(coords_text)
-    except Exception:
-        return []
-
-    if not isinstance(parsed, list):
-        return []
-
-    if parsed and isinstance(parsed[0], (int, float)):
-        return [parsed]  # 单个框
-
-    normalized: list[list[float]] = []
-
-    for item in parsed:
-        if not isinstance(item, (list, tuple)):
-            continue
-
-        if len(item) >= 4 and all(isinstance(n, (int, float)) for n in item[:4]):
-            normalized.append([float(n) for n in item[:4]])
-            continue
-
-        if len(item) >= 2:
-            first, second = item[0], item[1]
-            if isinstance(first, (list, tuple)) and isinstance(second, (list, tuple)):
-                if len(first) >= 2 and len(second) >= 2:
-                    try:
-                        normalized.append(
-                            [
-                                float(first[0]),
-                                float(first[1]),
-                                float(second[0]),
-                                float(second[1]),
-                            ]
-                        )
-                    except (TypeError, ValueError):
-                        continue
-
-    return normalized
-
-
-def _scale_box(box: Iterable[float], width: int, height: int) -> tuple[int, int, int, int]:
-    x1, y1, x2, y2 = box
-    return (
-        int(float(x1) / 999 * width),
-        int(float(y1) / 999 * height),
-        int(float(x2) / 999 * width),
-        int(float(y2) / 999 * height),
-    )
-
-
-def _replace_detection_blocks(
-    raw_text: str,
-    image: Image.Image,
-    page_index: int,
-    images_dir: Path,
-) -> tuple[str, list[str]]:
-    images_dir.mkdir(parents=True, exist_ok=True)
-    page_assets: list[str] = []
-    width, height = image.size
-
-    def _replacement(match: re.Match[str]) -> str:
-        label = match.group("label").strip()
-        coords_text = match.group("coords").strip()
-        boxes = _parse_coords(coords_text)
-
-        if label.lower() == "image" and boxes:
-            markdown_blocks: list[str] = []
-            for box in boxes:
-                x1, y1, x2, y2 = _scale_box(box, width, height)
-                if x2 <= x1 or y2 <= y1:
-                    continue
-                cropped = image.crop((x1, y1, x2, y2))
-                asset_name = f"images/page-{page_index}-img-{len(page_assets)}.jpg"
-                asset_path = images_dir / Path(asset_name).name
-                cropped.save(asset_path, format="JPEG", quality=95)
-                page_assets.append(asset_name)
-                markdown_blocks.append(f"![]({asset_name})")
-            return "\n".join(markdown_blocks) if markdown_blocks else ""
-
-        if _is_textual_label(label):
-            return ""
-
-        return f"<!-- {label} -->"
-
-    processed = DETECTION_BLOCK.sub(_replacement, raw_text)
-    cleaned = processed.replace("<|grounding|>", "")
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    cleaned = cleaned.strip()
-    return cleaned, page_assets
+class PdfWorkerError(RuntimeError):
+    """Go worker 执行失败"""
 
 
 def process_pdf(
@@ -204,159 +63,162 @@ def process_pdf(
     output_dir: Path,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     max_concurrency: Optional[int] = None,
+    task_id: Optional[str] = None,
 ) -> PdfProcessingResult:
+    """调用 Go worker 处理 PDF"""
     output_dir.mkdir(parents=True, exist_ok=True)
-    images_dir = output_dir / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    images = _render_pdf(pdf_path)
 
-    total_pages = len(images)
+    worker_bin = Path(settings.pdf_worker_bin)
+    if not worker_bin.exists():
+        raise PdfWorkerError(f"PDF worker binary not found: {worker_bin}")
 
-    def _notify(current: int, message: str) -> None:
-        if progress_callback is None:
-            return
-        try:
-            progress_callback(current, total_pages, message)
-        except Exception:
-            # 避免回调异常影响主流程
-            pass
+    infer_url = settings.worker_remote_infer_url or f"http://{settings.api_host}:{settings.api_port}/internal/infer"
+    effective_concurrency = max_concurrency or settings.pdf_max_concurrency
 
-    if total_pages == 0:
-        _notify(0, "PDF 中未检测到页面")
+    config: dict[str, Any] = {
+        "task_id": task_id or "",
+        "pdf_path": str(pdf_path),
+        "output_dir": str(output_dir),
+        "dpi": settings.pdf_worker_dpi,
+        "prompt": settings.pdf_prompt,
+        "infer_url": infer_url,
+        "auth_token": settings.internal_api_token,
+        "base_size": settings.base_size,
+        "image_size": settings.image_size,
+        "crop_mode": settings.crop_mode,
+        "max_concurrency": int(effective_concurrency),
+        "request_timeout_seconds": settings.pdf_worker_timeout_seconds,
+    }
 
-    pages_buffer: list[Optional[PageResult]] = [None] * total_pages
-    all_assets: list[str] = []
-    completed_pages = 0
-    configured_max = (
-        max_concurrency if max_concurrency is not None else getattr(settings, "pdf_max_concurrency", 2)
-    )
-    try:
-        max_workers = int(configured_max)
-    except (TypeError, ValueError):
-        max_workers = 1
-    if max_workers <= 0:
-        max_workers = 1
+    result_payload = _run_worker(worker_bin, config, progress_callback)
+    return _payload_to_result(result_payload)
 
-    inflight: dict[Future[str], tuple[int, Image.Image]] = {}
 
-    def _enqueue_page(index: int, page_image: Image.Image) -> None:
-        future = worker_engine.submit_infer(
-            prompt=settings.pdf_prompt,
-            image=page_image,
-            base_size=settings.base_size,
-            image_size=settings.image_size,
-            crop_mode=settings.crop_mode,
-        )
-        inflight[future] = (index, page_image)
+def _run_worker(
+    worker_bin: Path,
+    config: dict[str, Any],
+    progress_callback: Optional[Callable[[int, int, str], None]],
+) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="pdf-worker-") as temp_dir:
+        config_path = Path(temp_dir) / "config.json"
+        config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
 
-    def _drain(block: bool) -> None:
-        nonlocal completed_pages
-        if not inflight:
-            return
-
-        done, _ = wait(
-            tuple(inflight.keys()),
-            return_when=ALL_COMPLETED if block else FIRST_COMPLETED,
+        process = subprocess.Popen(
+            [str(worker_bin), "--config", str(config_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
-        for future in done:
-            index, page_image = inflight.pop(future)
+        payload: Optional[dict[str, Any]] = None
+        stderr_lines: list[str] = []
+
+        assert process.stdout is not None
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
             try:
-                raw_text = future.result()
-            except Exception:
-                # 取消剩余任务并重新抛出异常
-                for pending in inflight.keys():
-                    pending.cancel()
-                raise
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
-            markdown, page_assets = _replace_detection_blocks(
-                raw_text, page_image, index, images_dir
-            )
-            boxes = GroundingParser.parse_detections(
-                raw_text, page_image.width, page_image.height
+            event_type = event.get("type")
+            if event_type == "progress":
+                _handle_progress(event, progress_callback)
+            elif event_type == "result":
+                payload_data = event.get("payload")
+                if isinstance(payload_data, dict):
+                    payload = payload_data
+            elif event_type == "error":
+                message = event.get("error") or "PDF worker returned error"
+                process.terminate()
+                raise PdfWorkerError(str(message))
+
+        process.wait()
+
+        if process.stderr is not None:
+            stderr_lines = [line.strip() for line in process.stderr.readlines() if line.strip()]
+
+        if process.returncode != 0:
+            raise PdfWorkerError(
+                "PDF worker failed (exit code {}): {}".format(
+                    process.returncode, "\n".join(stderr_lines)
+                )
             )
 
-            page_result = PageResult(
+        if payload is None:
+            raise PdfWorkerError("PDF worker completed without result payload")
+
+        return payload
+
+
+def _handle_progress(event: dict[str, Any], callback: Optional[Callable[[int, int, str], None]]) -> None:
+    if callback is None:
+        return
+    progress = event.get("progress")
+    if not isinstance(progress, dict):
+        return
+    current = int(progress.get("current", 0) or 0)
+    total = int(progress.get("total", 0) or 0)
+    message = str(progress.get("message") or "")
+    try:
+        callback(current, total, message)
+    except Exception:
+        # 避免回调异常影响主流程
+        pass
+
+
+def _payload_to_result(payload: dict[str, Any]) -> PdfProcessingResult:
+    markdown_file = str(payload.get("markdown_file") or "")
+    raw_json_file = str(payload.get("raw_json_file") or "")
+    archive_file = payload.get("archive_file")
+    if isinstance(archive_file, str):
+        archive_name: Optional[str] = archive_file
+    else:
+        archive_name = None
+
+    pages_data = payload.get("pages") or []
+    pages: list[PageResult] = []
+    for item in pages_data:
+        if not isinstance(item, dict):
+            continue
+        index = int(item.get("index", item.get("page_number", 1)) or 0)
+        markdown = str(item.get("markdown") or "")
+        raw_text = str(item.get("raw_text") or "")
+        image_assets = [str(asset) for asset in item.get("image_assets") or []]
+        boxes_payload = item.get("boxes") or []
+        boxes: list[dict[str, Any]] = []
+        for box in boxes_payload:
+            if isinstance(box, dict) and {"label", "box"} <= box.keys():
+                coords_raw = box.get("box")
+                coords: list[int] = []
+                if isinstance(coords_raw, (list, tuple)):
+                    for value in coords_raw:
+                        try:
+                            coords.append(int(value))
+                        except (TypeError, ValueError):
+                            break
+                if len(coords) == 4:
+                    boxes.append({"label": box["label"], "box": coords})
+        pages.append(
+            PageResult(
                 index=index,
                 markdown=markdown,
                 raw_text=raw_text,
-                image_assets=page_assets,
+                image_assets=image_assets,
                 boxes=boxes,
             )
-            pages_buffer[index] = page_result
-            all_assets.extend(page_assets)
+        )
 
-            completed_pages += 1
-            _notify(
-                completed_pages,
-                f"第 {index + 1}/{total_pages} 页识别完成",
-            )
-
-    _notify(0, "正在渲染 PDF 页面")
-
-    for idx, page_image in enumerate(images):
-        _enqueue_page(idx, page_image)
-        _notify(completed_pages, f"第 {idx + 1}/{total_pages} 页已排队")
-
-        if len(inflight) >= max_workers:
-            _drain(block=False)
-
-    # 等待剩余任务完成
-    _drain(block=True)
-
-    pages: list[PageResult] = [page for page in pages_buffer if page is not None]
-
-    markdown_path = output_dir / "result.md"
-    raw_json_path = output_dir / "raw.json"
-
-    _notify(completed_pages, "正在生成 Markdown 摘要")
-
-    page_blocks: list[str] = []
-    for page in pages:
-        page_header = f"<!-- page:{page.index + 1} -->"
-        page_content = page.markdown.strip()
-        block_parts = [page_header]
-        if page_content:
-            block_parts.append(page_content)
-        page_blocks.append("\n\n".join(block_parts))
-    combined_markdown = "\n\n---\n\n".join(block for block in page_blocks if block)
-    markdown_path.write_text(combined_markdown, encoding="utf-8")
-
-    raw_payload = {
-        "pages": [
-            {
-                "index": page.index,
-                "page_number": page.index + 1,
-                "raw_text": page.raw_text,
-                "markdown": page.markdown,
-                "boxes": page.boxes,
-                "image_assets": page.image_assets,
-            }
-            for page in pages
-        ]
-    }
-    raw_json_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    _notify(completed_pages, "正在打包结果资源")
-
-    archive_path = output_dir / "result.zip"
-    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        if markdown_path.exists():
-            archive.write(markdown_path, arcname=markdown_path.name)
-        if raw_json_path.exists():
-            archive.write(raw_json_path, arcname=raw_json_path.name)
-        for asset in all_assets:
-            asset_path = (output_dir / asset).resolve()
-            if asset_path.exists():
-                archive.write(asset_path, arcname=asset)
-
-    _notify(total_pages, "全部页面处理完成")
+    image_assets = [str(asset) for asset in payload.get("images") or []]
+    total_pages = int(payload.get("total_pages", len(pages)) or len(pages))
 
     return PdfProcessingResult(
-        markdown_file=str(markdown_path.name),
-        raw_json_file=str(raw_json_path.name),
+        markdown_file=markdown_file,
+        raw_json_file=raw_json_file,
         pages=pages,
-        image_assets=all_assets,
-        archive_file=str(archive_path.name),
-        total_pages=len(pages),
+        image_assets=image_assets,
+        archive_file=archive_name,
+        total_pages=total_pages,
     )

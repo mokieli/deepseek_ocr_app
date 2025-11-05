@@ -1,6 +1,12 @@
 # vLLM Direct 推理 Dockerfile
 # 基于官方 vllm/vllm-openai:nightly 镜像，集成 FastAPI 后端和 DeepSeek-OCR 模型
 
+FROM golang:1.25.3-bookworm AS pdfworker-builder
+WORKDIR /workspace
+COPY go.mod ./
+COPY go/ ./go/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/pdfworker ./go/cmd/pdfworker
+
 FROM vllm/vllm-openai:nightly
 
 WORKDIR /app
@@ -19,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libgl1 \
+    poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,6 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY alembic.ini ./alembic.ini
 COPY migrations/ ./migrations/
 COPY app/ ./app/
+COPY --from=pdfworker-builder /out/pdfworker /usr/local/bin/pdfworker
 
 EXPOSE 8001
 

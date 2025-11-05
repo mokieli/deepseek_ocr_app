@@ -98,6 +98,21 @@ class Settings(BaseSettings):
         alias="PDF_MAX_CONCURRENCY",
         description="PDF 页面并发识别数量上限"
     )
+    pdf_worker_bin: str = Field(
+        default="/usr/local/bin/pdfworker",
+        alias="PDF_WORKER_BIN",
+        description="Go PDF worker 可执行文件路径"
+    )
+    pdf_worker_dpi: int = Field(
+        default=144,
+        alias="PDF_WORKER_DPI",
+        description="PDF 渲染 DPI"
+    )
+    pdf_worker_timeout_seconds: int = Field(
+        default=300,
+        alias="PDF_WORKER_TIMEOUT_SECONDS",
+        description="Go worker 调用推理接口的超时时间"
+    )
 
     # 默认提示词
     image_prompt: str = Field(

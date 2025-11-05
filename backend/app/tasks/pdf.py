@@ -106,6 +106,7 @@ async def _run_pdf_task(task_id: str) -> None:
             output_dir,
             _progress_callback,
             settings.pdf_max_concurrency,
+            task_id,
         )
 
         async with session_factory() as session:

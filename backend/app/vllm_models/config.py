@@ -16,11 +16,11 @@ BASE_SIZE = int(os.environ.get('BASE_SIZE', '1024'))
 IMAGE_SIZE = int(os.environ.get('IMAGE_SIZE', '640'))
 CROP_MODE = os.environ.get('CROP_MODE', 'True').lower() in ('true', '1', 'yes')
 MIN_CROPS = 2
-MAX_CROPS = 6  # 最大值为9，如果 GPU 内存较小建议设为6
+MAX_CROPS = 9  # 最大值为9，如果 GPU 内存较小建议设为6
 
 # 推理引擎参数
-MAX_CONCURRENCY = 100  # 最大并发数，GPU 内存有限时请降低
-NUM_WORKERS = 64  # 图像预处理（resize/padding）工作线程数
+MAX_CONCURRENCY = 200  # 最大并发数，GPU 内存有限时请降低
+NUM_WORKERS = 128  # 图像预处理（resize/padding）工作线程数
 
 # 调试和优化选项
 PRINT_NUM_VIS_TOKENS = False
