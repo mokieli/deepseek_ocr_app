@@ -5,6 +5,7 @@ import { TaskStatusResponse, ocrClient } from '../api/client'
 import { isProcessing, statusBadgeStyles } from '../utils/taskStatus'
 import { buildDownloadUrl } from '../utils/url'
 import { formatDuration, formatTimestamp } from '../utils/time'
+import { getErrorMessage } from '../utils/errors'
 
 const TaskLookupPanel = () => {
   const [taskIdInput, setTaskIdInput] = useState('')
@@ -20,9 +21,9 @@ const TaskLookupPanel = () => {
         const result = await ocrClient.getTaskStatus(taskId)
         setStatus(result)
         setError(null)
-      } catch (err) {
+      } catch (err: unknown) {
         setStatus(null)
-        setError((err as Error).message)
+        setError(getErrorMessage(err))
       } finally {
         setIsLoading(false)
       }

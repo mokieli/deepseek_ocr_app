@@ -354,12 +354,24 @@ def _build_task_progress(progress_payload: Any) -> Optional[TaskProgress]:
     except (TypeError, ValueError):
         percent = 0.0
     message = progress_payload.get("message")
+    pages_completed_val = progress_payload.get("pages_completed")
+    pages_total_val = progress_payload.get("pages_total")
+    try:
+        pages_completed = int(pages_completed_val) if pages_completed_val is not None else None
+    except (TypeError, ValueError):
+        pages_completed = None
+    try:
+        pages_total = int(pages_total_val) if pages_total_val is not None else None
+    except (TypeError, ValueError):
+        pages_total = None
 
     return TaskProgress(
         current=current,
         total=total,
         percent=percent,
         message=message if isinstance(message, str) else None,
+        pages_completed=pages_completed,
+        pages_total=pages_total,
     )
 
 

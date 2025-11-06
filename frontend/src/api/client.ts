@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios'
+import { isErrorLike } from '../utils/errors'
 
 export interface BoundingBox {
   label: string
@@ -50,6 +51,8 @@ export interface TaskProgress {
   total: number
   percent: number
   message?: string | null
+  pages_completed?: number | null
+  pages_total?: number | null
 }
 
 export interface TaskStatusResponse {
@@ -77,15 +80,31 @@ class OCRClient {
 
     this.client.interceptors.response.use(
       (response) => response,
-      (error) => {
-        const message = error.response?.data?.detail ?? error.message ?? 'Request failed'
+      (error: unknown) => {
+        // Derive a robust error message without using any
+        let message = 'Request failed'
+        if (error && typeof error === 'object') {
+          const maybeResponse = (error as Record<string, unknown>).response
+          if (maybeResponse && typeof maybeResponse === 'object') {
+            const data = (maybeResponse as Record<string, unknown>).data
+            if (data && typeof data === 'object') {
+              const detail = (data as Record<string, unknown>).detail
+              if (typeof detail === 'string') {
+                message = detail
+              }
+            }
+          }
+        }
+        if (message === 'Request failed' && isErrorLike(error)) {
+          message = error.message
+        }
         throw new Error(message)
       }
     )
   }
 
-  async healthCheck() {
-    const { data } = await this.client.get('/health')
+  async healthCheck(): Promise<unknown> {
+    const { data } = await this.client.get<unknown>('/health')
     return data
   }
 
@@ -93,7 +112,7 @@ class OCRClient {
     const formData = new FormData()
     formData.append('image', file)
 
-    const { data } = await this.client.post('/api/ocr/image', formData, {
+    const { data } = await this.client.post<ImageOCRResponse>('/api/ocr/image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return data
@@ -103,14 +122,14 @@ class OCRClient {
     const formData = new FormData()
     formData.append('pdf', file)
 
-    const { data } = await this.client.post('/api/ocr/pdf', formData, {
+    const { data } = await this.client.post<TaskCreateResponse>('/api/ocr/pdf', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return data
   }
 
   async getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
-    const { data } = await this.client.get(`/api/tasks/${taskId}`)
+    const { data } = await this.client.get<TaskStatusResponse>(`/api/tasks/${taskId}`)
     return data
   }
 }

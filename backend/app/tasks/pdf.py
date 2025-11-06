@@ -9,11 +9,13 @@ from pathlib import Path
 
 from threading import Event, Thread
 
+from sqlalchemy import func, update
+
 from ..celery_app import celery_app
 from ..config import settings
 from ..db.models import OcrTask, TaskStatus
 from ..db.session import get_session_factory
-from ..services.pdf_processor import process_pdf
+from ..services.pdf_processor import ProgressUpdate, process_pdf
 from ..services.storage import StorageManager
 
 
@@ -59,45 +61,52 @@ def process_pdf_task(self, task_id: str) -> None:  # type: ignore[override]
 
 async def _run_pdf_task(task_id: str) -> None:
     session_factory = get_session_factory()
+    task_uuid = uuid.UUID(task_id)
     async with session_factory() as session:
-        db_task = await session.get(OcrTask, uuid.UUID(task_id))
+        db_task = await session.get(OcrTask, task_uuid)
         if db_task is None:
             return
 
         db_task.mark_running()
-        db_task.result_payload = {"progress": {"current": 0, "total": 0, "percent": 0.0, "message": "任务已启动"}}
+        db_task.result_payload = {
+            "progress": {
+                "current": 0,
+                "total": 0,
+                "percent": 0.0,
+                "message": "任务已启动",
+                "pages_completed": 0,
+                "pages_total": 0,
+            }
+        }
         await session.commit()
 
     loop = asyncio.get_running_loop()
 
-    async def _update_progress(current: int, total: int, message: str) -> None:
+    async def _update_progress(progress_update: ProgressUpdate) -> None:
         async with session_factory() as session:
-            task = await session.get(OcrTask, uuid.UUID(task_id))
+            task = await session.get(OcrTask, task_uuid)
             if task is None:
                 return
             if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED}:
                 return
-            if message and "已排队" in message:
+            if progress_update.message and "已排队" in progress_update.message:
                 return
 
             payload = dict(task.result_payload or {})
-            percent = 0.0
-            if total > 0:
-                percent = round(min(current / total * 100.0, 100.0), 2)
-            elif "完成" in message:
-                percent = 100.0
+            payload["progress"] = progress_update.to_payload()
+            update_stmt = (
+                update(OcrTask)
+                .where(OcrTask.id == task_uuid, OcrTask.status == TaskStatus.RUNNING)
+                .values(result_payload=payload, updated_at=func.now())
+            )
+            result = await session.execute(update_stmt)
+            if result.rowcount:
+                await session.commit()
+            else:
+                await session.rollback()
 
-            payload["progress"] = {
-                "current": current,
-                "total": total,
-                "percent": percent,
-                "message": message,
-            }
-            task.result_payload = payload
-            await session.commit()
-
-    def _progress_callback(current: int, total: int, message: str) -> None:
-        loop.call_soon_threadsafe(asyncio.create_task, _update_progress(current, total, message))
+    def _progress_callback(progress: ProgressUpdate) -> None:
+        loop.call_soon_threadsafe(asyncio.create_task, _update_progress(progress))
 
     result = None
     try:
@@ -113,7 +122,7 @@ async def _run_pdf_task(task_id: str) -> None:
             task_id,
         )
         async with session_factory() as session:
-            task = await session.get(OcrTask, uuid.UUID(task_id))
+            task = await session.get(OcrTask, task_uuid)
             if task is None:
                 return
             task.mark_succeeded(result.to_payload(), str(output_dir))
@@ -123,7 +132,7 @@ async def _run_pdf_task(task_id: str) -> None:
         error_message = f"{type(exc).__name__}: {exc}"
         traceback.print_exc()
         async with session_factory() as session:
-            task = await session.get(OcrTask, uuid.UUID(task_id))
+            task = await session.get(OcrTask, task_uuid)
             if task is None:
                 return
             task.mark_failed(error_message)
@@ -132,6 +141,8 @@ async def _run_pdf_task(task_id: str) -> None:
             current = 0
             total = 0
             percent = 0.0
+            pages_completed = None
+            pages_total = None
             if isinstance(progress_payload, dict):
                 current = int(progress_payload.get("current", 0) or 0)
                 total = int(progress_payload.get("total", 0) or 0)
@@ -139,11 +150,27 @@ async def _run_pdf_task(task_id: str) -> None:
                     percent = float(progress_payload.get("percent", 0.0) or 0.0)
                 except (TypeError, ValueError):
                     percent = 0.0
+                try:
+                    raw_completed = progress_payload.get("pages_completed")
+                    if raw_completed is not None:
+                        pages_completed = int(raw_completed)
+                except (TypeError, ValueError):
+                    pages_completed = None
+                try:
+                    raw_total = progress_payload.get("pages_total")
+                    if raw_total is not None:
+                        pages_total = int(raw_total)
+                except (TypeError, ValueError):
+                    pages_total = None
             payload["progress"] = {
                 "current": current,
                 "total": total,
                 "percent": percent,
                 "message": f"失败：{error_message}",
             }
+            if pages_completed is not None:
+                payload["progress"]["pages_completed"] = pages_completed
+            if pages_total is not None:
+                payload["progress"]["pages_total"] = pages_total
             task.result_payload = payload
             await session.commit()

@@ -5,6 +5,7 @@ import { TaskStatusResponse, ocrClient } from '../api/client'
 import { isProcessing, statusBadgeStyles } from '../utils/taskStatus'
 import { buildDownloadUrl } from '../utils/url'
 import { formatDuration, formatTimestamp } from '../utils/time'
+import { getErrorMessage } from '../utils/errors'
 
 const PdfTaskPanel = () => {
   const [pdfTaskId, setPdfTaskId] = useState<string | null>(null)
@@ -20,8 +21,8 @@ const PdfTaskPanel = () => {
       const status = await ocrClient.getTaskStatus(pdfTaskId)
       setPdfStatus(status)
       setPdfError(null)
-    } catch (error) {
-      setPdfError((error as Error).message)
+    } catch (error: unknown) {
+      setPdfError(getErrorMessage(error))
     }
   }, [pdfTaskId])
 
@@ -59,8 +60,8 @@ const PdfTaskPanel = () => {
       const { task_id } = await ocrClient.enqueuePdf(file)
       setPdfTaskId(task_id)
       setPdfStatus(null)
-    } catch (error) {
-      setPdfError((error as Error).message)
+    } catch (error: unknown) {
+      setPdfError(getErrorMessage(error))
       setPdfTaskId(null)
       setPdfStatus(null)
     } finally {
@@ -75,6 +76,15 @@ const PdfTaskPanel = () => {
     if (!pdfProgress) return false
     return pdfProgress.total > 0 || pdfProgress.percent > 0 || Boolean(pdfProgress.message)
   }, [pdfProgress])
+  const pdfPagesCompleted = pdfProgress?.pages_completed ?? null
+  const pdfPagesTotal = pdfProgress?.pages_total ?? null
+  const showPdfPageCounter =
+    typeof pdfPagesTotal === 'number' && Number.isFinite(pdfPagesTotal) && pdfPagesTotal > 0
+  const totalPagesValue = typeof pdfPagesTotal === 'number' ? pdfPagesTotal : 0
+  const completedPagesDisplay = showPdfPageCounter
+    ? Math.max(0, Math.floor(typeof pdfPagesCompleted === 'number' ? pdfPagesCompleted : 0))
+    : 0
+  const totalPagesDisplay = showPdfPageCounter ? Math.max(0, Math.floor(totalPagesValue)) : 0
 
   const archiveUrl = buildDownloadUrl(pdfStatus?.result?.archive_url ?? undefined)
   const pdfTiming = pdfStatus?.timing ?? null
@@ -180,6 +190,14 @@ const PdfTaskPanel = () => {
                 <span>处理进度</span>
                 <span>{Math.round(pdfProgressPercent)}%</span>
               </div>
+              {showPdfPageCounter && (
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>页面完成</span>
+                  <span className="font-medium text-slate-700">
+                    {completedPagesDisplay}/{totalPagesDisplay}
+                  </span>
+                </div>
+              )}
               <div className="h-2 w-full rounded-full bg-slate-200">
                 <div
                   className="h-full rounded-full bg-indigo-500 transition-all duration-500"

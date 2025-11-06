@@ -57,6 +57,8 @@ class TaskProgress(BaseModel):
     total: int = Field(0, description="总量")
     percent: float = Field(0.0, description="完成百分比 (0-100)")
     message: Optional[str] = Field(None, description="进度说明")
+    pages_completed: Optional[int] = Field(default=None, description="已完成页数")
+    pages_total: Optional[int] = Field(default=None, description="总页数")
 
 
 class TaskTiming(BaseModel):

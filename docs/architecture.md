@@ -46,7 +46,7 @@
 - `backend/app/api/routes.py`
   - 公共端点：`/api/ocr/image`、`/api/ocr/pdf`、`/api/tasks/{task_id}`。
   - 内部端点：`/internal/infer`，供 Celery worker 复用 FastAPI 进程内的 `AsyncLLMEngine`。
-  - 统一返回 `TaskStatusResponse`；`result` 字段包含 Markdown/JSON/ZIP 下载地址，`progress` 提供实时进度，`timing` 则返回标准化的排队/启动/完成时间与耗时。
+  - 统一返回 `TaskStatusResponse`；`result` 字段包含 Markdown/JSON/ZIP 下载地址，`progress` 提供实时进度（含页级 `pages_completed` / `pages_total` 聚合），`timing` 则返回标准化的排队/启动/完成时间与耗时。
 
 ### 服务层
 - `vllm_direct_engine.py`：FastAPI 进程的 vLLM 封装，负责加载模型、接受推理请求。
@@ -54,7 +54,8 @@
 - `pdf_processor.py`：
   - 构造任务配置并启动 Go 编译出的 `pdfworker` 二进制，消费其逐行输出的 JSON 事件。
   - Go 子进程负责 PDF 渲染（`pdftoppm`）、并发调用 `/internal/infer`、裁剪检测框图片、生成 Markdown/JSON 以及打包 ZIP。
-  - Python 侧仅负责进度回调、错误冒泡和把最终 payload 映射为 `PdfProcessingResult`。
+  - Python 侧通过 `ProgressUpdate` 数据类安全回传百分比与页级统计，处理错误并把最终 payload 映射为 `PdfProcessingResult`。
+  - Go 源码拆分为 `config.go` / `render.go` / `inference.go` / `output.go` / `events.go` 等模块，便于针对性测试与性能调优。
 - `grounding_parser.py`：解析 `<|ref|><|det|>` 标签，支持全角符号清洗、嵌套坐标。
 - 其它辅助模块：`prompt_builder.py`、`storage.py` 等。
 
@@ -76,7 +77,7 @@
 
 - `frontend/src/App.tsx`：组合独立功能 panel，保持响应式双栏布局。
 - `frontend/src/components/ImageOcrPanel.tsx`：图片识别、预览叠层与检测框列表，上传后即时返回结果。
-- `frontend/src/components/PdfTaskPanel.tsx`：PDF 上传 + 1 s 自动轮询进度，移除手动刷新按钮，任务完成后仅暴露 ZIP 下载。
+- `frontend/src/components/PdfTaskPanel.tsx`：PDF 上传 + 1 s 自动轮询进度，展示百分比与 “已完成/总页数” 计数，任务完成后默认暴露 ZIP 下载。
 - `frontend/src/components/TaskLookupPanel.tsx`：支持粘贴任意任务 ID，统一的状态徽标、进度条与 ZIP 下载。
 - `frontend/src/api/client.ts`：与后端模型保持一致，新增 `TaskProgress`、`archive_url`。
 - 样式整合 `index.css`、Tailwind，保留两列布局与卡片式视觉。
@@ -95,14 +96,14 @@
    - 通过 `pdf_processor` 启动 Go `pdfworker` 子进程，按配置 DPI 渲染页面并输出 JSON 行事件。
    - 子进程内置并发池调用 `/internal/infer`（带 `X-Internal-Token`，受 `PDF_MAX_CONCURRENCY`、`PDF_WORKER_TIMEOUT_SECONDS` 约束），并依据 `PDF_RENDER_WORKERS` 控制 `pdftoppm` 渲染页面的并行度。
    - 负责裁剪检测框图片、生成 Markdown/JSON，以及打包 `result.zip`，压缩阶段会持续输出 “正在压缩” 进度事件。
-   - Python 端读取进度事件更新 `result_payload.progress`，在接收最终 `result` 事件后写入数据库。
+   - Python 端通过 `ProgressUpdate` 解析进度事件，维护 `current/total` 与 `pages_completed/pages_total`，在接收最终 `result` 事件后写入数据库。
 3. 结束时输出：
    - `result.md`：页面注释 + 分隔线，保留模型原生 Markdown。
    - `raw.json`：原始文本、检测框、资产列表。
    - `result.zip`：打包 Markdown + JSON + `images/`。
 4. 前端轮询 `/api/tasks/{task_id}`：
    - `status` 控制徽标（排队中/执行中/完成/失败）。
-   - `progress.percent` 渲染条形图和提示语。
+   - `progress.percent` 渲染条形图和提示语，同时使用 `pages_completed` / `pages_total` 文本提示避免并发顺序问题。
    - `timing.duration_ms` 显示总耗时，`started_at`/`finished_at` 用于时间线。
    - `result.archive_url` 用于 ZIP 下载（默认展示），`markdown_url` 与 `image_urls` 可供其他调用方使用。
 
@@ -113,7 +114,7 @@
    - 支持回退：若未配置 `WORKER_REMOTE_INFER_URL`，worker 会在自身进程内加载模型（适用于开发环境）。
 
 2. **细粒度进度回传**
-   - `TaskProgress` 包含 `current`、`total`、`percent`、`message`，前端无需额外推理即可展示实时状态。
+   - `TaskProgress` 包含 `current`、`total`、`percent`、`message` 以及页级的 `pages_completed`、`pages_total`，前端无需额外推理即可展示实时状态。
    - 专用 `pdf-task-loop` 线程管理异步会话， `_update_progress` 在同一事件循环内提交数据库变更，避免跨循环 Future 冲突。
 
 3. **健壮的 Grounding 解析**

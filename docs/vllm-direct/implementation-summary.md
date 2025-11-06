@@ -21,6 +21,12 @@
 - **数据库迁移**：首个 Alembic 迁移存放于 `backend/migrations/versions/`，在 Docker 环境下执行 `docker compose exec backend-direct alembic upgrade head` 以应用结构更新。
 - **Go PDF Worker**：PDF 处理改由 Go 子进程执行，位于 `backend/pdfworker/`。Docker 多阶段构建会将二进制放到 `/usr/local/bin/pdfworker`，通过 `PDF_WORKER_BIN`/`PDF_WORKER_DPI`/`PDF_WORKER_TIMEOUT_SECONDS` 环境变量控制。Python worker 仅负责启动子进程、监听 JSON 事件并回写进度/结果。
 
+## 2026-01 更新
+
+- **页级进度聚合**：`pdfworker` 的进度事件新增 `pages_completed` / `pages_total` 字段，Python 侧以 `ProgressUpdate` 结构安全写入数据库，前端可直接展示 “已完成/总页数”。
+- **Go Worker 模块化**：`backend/pdfworker/go/cmd/pdfworker/` 拆分为 `config.go`、`events.go`、`render.go`、`inference.go`、`output.go`、`process.go` 等文件，利于定位性能瓶颈并编写单元测试。
+- **前端体验提升**：`PdfTaskPanel` 在进度条上方显示页数统计，同时所有面板复用 `getErrorMessage` 以统一处理 Axios / 浏览器异常。
+
 ## 架构变化
 
 ### 之前（双容器架构）

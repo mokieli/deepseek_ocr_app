@@ -7,7 +7,7 @@ export const buildDownloadUrl = (path?: string) => {
   }
   try {
     return new URL(path, API_BASE_URL).toString()
-  } catch (error) {
+  } catch (error: unknown) {
     console.warn('Failed to build download URL', error)
     return path
   }

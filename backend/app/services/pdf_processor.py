@@ -22,6 +22,66 @@ class PageResult:
 
 
 @dataclass
+class ProgressUpdate:
+    current: int
+    total: int
+    percent: float
+    message: str
+    pages_completed: Optional[int] = None
+    pages_total: Optional[int] = None
+
+    @classmethod
+    def from_event(cls, payload: dict[str, Any]) -> ProgressUpdate | None:
+        if not isinstance(payload, dict):
+            return None
+        current = int(payload.get("current", 0) or 0)
+        total = int(payload.get("total", 0) or 0)
+        message = str(payload.get("message") or "")
+        try:
+            percent = float(payload.get("percent", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            percent = 0.0
+        if percent <= 0.0 and total > 0:
+            percent = (current / total) * 100.0
+        pages_completed_raw = payload.get("pages_completed")
+        pages_total_raw = payload.get("pages_total")
+        pages_completed = None
+        pages_total = None
+        try:
+            if pages_completed_raw is not None:
+                pages_completed = int(pages_completed_raw)
+        except (TypeError, ValueError):
+            pages_completed = None
+        try:
+            if pages_total_raw is not None:
+                pages_total = int(pages_total_raw)
+        except (TypeError, ValueError):
+            pages_total = None
+        return cls(
+            current=current,
+            total=total,
+            percent=percent,
+            message=message,
+            pages_completed=pages_completed,
+            pages_total=pages_total,
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        percent = min(max(self.percent, 0.0), 100.0)
+        payload: dict[str, Any] = {
+            "current": self.current,
+            "total": self.total,
+            "percent": round(percent, 2),
+            "message": self.message,
+        }
+        if self.pages_completed is not None:
+            payload["pages_completed"] = self.pages_completed
+        if self.pages_total is not None:
+            payload["pages_total"] = self.pages_total
+        return payload
+
+
+@dataclass
 class PdfProcessingResult:
     markdown_file: str
     raw_json_file: str
@@ -50,6 +110,8 @@ class PdfProcessingResult:
             "total": self.total_pages,
             "percent": 100.0,
             "message": "已完成",
+            "pages_completed": self.total_pages,
+            "pages_total": self.total_pages,
         }
         return payload
 
@@ -61,7 +123,7 @@ class PdfWorkerError(RuntimeError):
 def process_pdf(
     pdf_path: Path,
     output_dir: Path,
-    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    progress_callback: Optional[Callable[[ProgressUpdate], None]] = None,
     max_concurrency: Optional[int] = None,
     task_id: Optional[str] = None,
 ) -> PdfProcessingResult:
@@ -98,7 +160,7 @@ def process_pdf(
 def _run_worker(
     worker_bin: Path,
     config: dict[str, Any],
-    progress_callback: Optional[Callable[[int, int, str], None]],
+    progress_callback: Optional[Callable[[ProgressUpdate], None]],
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="pdf-worker-") as temp_dir:
         config_path = Path(temp_dir) / "config.json"
@@ -154,17 +216,17 @@ def _run_worker(
         return payload
 
 
-def _handle_progress(event: dict[str, Any], callback: Optional[Callable[[int, int, str], None]]) -> None:
+def _handle_progress(event: dict[str, Any], callback: Optional[Callable[[ProgressUpdate], None]]) -> None:
     if callback is None:
         return
-    progress = event.get("progress")
-    if not isinstance(progress, dict):
+    progress_payload = event.get("progress")
+    if not isinstance(progress_payload, dict):
         return
-    current = int(progress.get("current", 0) or 0)
-    total = int(progress.get("total", 0) or 0)
-    message = str(progress.get("message") or "")
+    progress = ProgressUpdate.from_event(progress_payload)
+    if progress is None:
+        return
     try:
-        callback(current, total, message)
+        callback(progress)
     except Exception:
         # 避免回调异常影响主流程
         pass

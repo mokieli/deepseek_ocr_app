@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, FileText, ImageIcon, Loader2, Upload } from 
 
 import { ImageOCRResponse, ocrClient } from '../api/client'
 import { formatDuration, formatTimestamp } from '../utils/time'
+import { getErrorMessage } from '../utils/errors'
 
 type PreviewBox = {
   id: string
@@ -75,9 +76,9 @@ const ImageOcrPanel = () => {
     try {
       const result = await ocrClient.ocrImage(file)
       setImageResult(result)
-    } catch (error) {
+    } catch (error: unknown) {
       setImageResult(null)
-      setImageError((error as Error).message)
+      setImageError(getErrorMessage(error))
     } finally {
       setIsImageLoading(false)
       form.reset()
