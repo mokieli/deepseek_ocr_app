@@ -25,7 +25,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.vllm-direct
     container_name: deepseek-ocr-backend-direct
-    runtime: nvidia
+    #runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       # 模型配置
@@ -40,6 +40,7 @@ services:
       - MAX_MODEL_LEN=${MAX_MODEL_LEN:-8192}
       - ENFORCE_EAGER=${ENFORCE_EAGER:-False}
       - VLLM_USE_V1=${VLLM_USE_V1:-1}
+      - VLLM_SLEEP_WHEN_IDLE=1
       # DeepSeek OCR 模式
       - BASE_SIZE=${BASE_SIZE:-1024}
       - IMAGE_SIZE=${IMAGE_SIZE:-640}
@@ -94,7 +95,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.vllm-direct
     container_name: deepseek-ocr-worker
-    runtime: nvidia
+    #runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - MODEL_PATH=${MODEL_PATH:-deepseek-ai/DeepSeek-OCR}
