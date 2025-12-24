@@ -83,7 +83,7 @@ docker compose up --build backend-direct
 > 停止服务：`docker compose down`
 
 ## ⚙️ 关键环境变量
-`.env` 中的核心配置如下（更多详见 `.env.vllm-direct` 注释）：
+`.env` 中的核心配置如下（更多详见 `.env.example` 注释）：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
