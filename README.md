@@ -78,7 +78,7 @@ docker compose up --build backend-direct
 ### 4. 访问服务
 - 后端 API 文档: http://localhost:8001/docs
 - 健康检查: http://localhost:8001/health
-- 前端界面: http://localhost:3000
+- 前端界面: http://localhost:37001
 
 > 停止服务：`docker compose down`
 
