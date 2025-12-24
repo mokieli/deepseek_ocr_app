@@ -5,12 +5,15 @@
 ![DeepSeek OCR](assets/multi-bird.png)
 
 ## 此仓库的修改
-- PDF扫描结果压缩包名称改为 `[original_name]_PDF_OCR_Result.zip` ，而不是默认的 `result.zip` 
-- vLLM容器镜像版本改为 `v0.13.0`
-- 通过 `frontend/.env` 将前端界面调用的后端API指向服务器IP而不是localhost，解决局域网访问前端无法调用api的问题
-- 修改 `docker-compsose.yml` 以解决奇怪的报错
-- 通过 `.env` 将前端界面的端口改为 `37001`
+- PDF扫描结果压缩包名称改为`[original_name]_PDF_OCR_Result.zip`，而不是原来的`result.zip`
+- vLLM容器镜像版本改为`v0.13.0`
+- 通过`frontend/.env`将前端界面调用的后端API指向服务器IP而不是`localhost`，解决局域网访问前端无法调用api的问题
+- 修改`docker-compsose.yml`以解决奇怪的报错
+- 通过`.env`将前端界面的端口改为`37001`
 - 可能还有些修改忘记了，没有列出
+## 此仓库注意事项
+- 这个仓库的配置参数在双卡Tesla T10设备上正常运行，其它设备可能需要修改配置文件`.env`才能使用
+- 请将`frontend/.env`中的IP地址改为你的服务端地址
 
 ## ✨ 亮点（v4.0.0）
 - ✅ **单容器推理链路**：直接运行在官方 `vllm/vllm-openai:nightly` 镜像之上，消除 OpenAI API token 限制
