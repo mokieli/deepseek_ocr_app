@@ -236,9 +236,10 @@ const PdfTaskPanel = () => {
                 href={archiveUrl}
                 target="_blank"
                 rel="noreferrer"
+                download={pdfStatus.result?.archive_file || "result.zip"}
               >
                 <Download className="h-3.5 w-3.5" />
-                下载结果 ZIP
+                {pdfStatus.result?.archive_file ? `下载 ${pdfStatus.result.archive_file}` : '下载结果 ZIP'}
               </a>
             ) : (
               <p className="mt-3 text-xs text-slate-400">等待任务完成后即可下载。</p>

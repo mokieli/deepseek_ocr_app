@@ -218,6 +218,7 @@ async def enqueue_pdf_ocr(
         id=task_id,
         task_type=TaskType.PDF,
         input_path=str(input_path),
+        original_filename=filename,
         queued_at=datetime.now(timezone.utc),
     )
     session.add(task)

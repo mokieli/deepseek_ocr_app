@@ -43,6 +43,7 @@ class OcrTask(Base):
     input_path: Mapped[str] = mapped_column(String(length=1024))
     output_dir: Mapped[str | None] = mapped_column(String(length=1024), nullable=True)
     result_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    original_filename: Mapped[str] = mapped_column(String(length=255), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     queued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -126,6 +126,7 @@ def process_pdf(
     progress_callback: Optional[Callable[[ProgressUpdate], None]] = None,
     max_concurrency: Optional[int] = None,
     task_id: Optional[str] = None,
+    original_filename: Optional[str] = None,  # Add original filename parameter
 ) -> PdfProcessingResult:
     """调用 Go worker 处理 PDF"""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +152,7 @@ def process_pdf(
         "max_concurrency": int(effective_concurrency),
         "request_timeout_seconds": settings.pdf_worker_timeout_seconds,
         "render_workers": settings.pdf_render_workers,
+        "original_filename": original_filename,  # Add original filename to config
     }
 
     result_payload = _run_worker(worker_bin, config, progress_callback)
