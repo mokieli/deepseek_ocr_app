@@ -5,7 +5,7 @@
 ![DeepSeek OCR](assets/multi-bird.png)
 
 ## 此仓库的修改
-- PDF扫描结果压缩包名称改为`[original_name]_PDF_OCR_Result.zip`，而不是原来的`result.zip`
+- PDF扫描结果的压缩包命名为`[original_name]_PDF_OCR_Result.zip`，而不是原来的`result.zip`
 - vLLM容器镜像版本改为`v0.13.0`
 - 通过`frontend/.env`将前端界面调用的后端API指向服务器IP而不是`localhost`，解决局域网访问前端无法调用api的问题
 - 修改`docker-compsose.yml`以解决奇怪的报错
