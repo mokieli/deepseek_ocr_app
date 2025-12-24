@@ -1,20 +1,17 @@
 package main
 
 import (
-    "archive/zip"
-    "context"
-    "encoding/json"
-    "errors"
-    "flag"
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
-    "sync"
-    "sync/atomic"
+	"archive/zip"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 )
-
-
 
 func main() {
 	var configPath string
@@ -32,7 +29,6 @@ func main() {
 		writer.Error(fmt.Errorf("failed to read config: %w", err))
 		os.Exit(1)
 	}
-	
 	var cfg Config
 	if err := json.Unmarshal(configBytes, &cfg); err != nil {
 		writer.Error(fmt.Errorf("invalid config: %w", err))
@@ -248,25 +244,12 @@ func main() {
 	atomic.StoreInt64(&progressTotal, int64(finalTotal))
 	reportProgress(pagesDone, fmt.Sprintf("正在压缩结果资源 (0/%d)", archiveTotal))
 
-	// Generate custom filename based on original PDF name or use default
 	var archiveName string
 	if cfg.OriginalFilename != "" {
-	  // Sanitize filename: replace invalid characters with underscore
-	  sanitized := strings.Map(func(r rune) rune {
-	    switch r {
-	    case '/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ':
-	      return '_'
-	    default:
-	      return r
-	    }
-	  }, cfg.OriginalFilename)
-	  // Remove file extension
-	  sanitized = strings.TrimSuffix(sanitized, filepath.Ext(sanitized))
-	  archiveName = fmt.Sprintf("%s_PDF_OCR_Result.zip", sanitized)
+	  archiveName = fmt.Sprintf("%s_PDF_OCR_Result.zip", cfg.OriginalFilename)
 	} else {
-	  archiveName = "result.zip" // Fallback for backward compatibility
+	  archiveName = "result.zip"
 	}
-	
 	archivePath := filepath.Join(cfg.OutputDir, archiveName)
 	baseProgress := pagesDone
 	if err := writeArchive(archivePath, entries, func(done int, total int, name string) {

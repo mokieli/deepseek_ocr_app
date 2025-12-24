@@ -112,7 +112,6 @@ async def _run_pdf_task(task_id: str) -> None:
     try:
         input_path = Path(db_task.input_path)  # type: ignore[attr-defined]
         output_dir = storage_manager.get_task_output_dir(task_id)
-        original_filename = db_task.original_filename  # Extract original filename
 
         result = await asyncio.to_thread(
             process_pdf,
@@ -121,7 +120,7 @@ async def _run_pdf_task(task_id: str) -> None:
             _progress_callback,
             settings.pdf_max_concurrency,
             task_id,
-            original_filename,  # Pass original filename to PDF processor
+            db_task.original_filename,
         )
         async with session_factory() as session:
             task = await session.get(OcrTask, task_uuid)
